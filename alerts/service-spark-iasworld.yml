@@ -1,0 +1,15 @@
+# service-spark-iasworld.yml
+alerts:
+  - name: "Spark ingest not run"  # Unique name for the alert
+    log_group: /ccao/jobs/spark   # Name of a CloudWatch log group to check
+    log_query: "info"             # String to search for in logs
+    error_if: "no_match"          # Error if no match found
+    schedule: "0 12 * * *"        # cron: check at 12pm UTC daily
+    lookback_hours: 12            # Job must have run in past 12 hours
+
+  - name: "Spark ingest error"
+    log_group: /ccao/jobs/spark
+    log_query: "error"
+    error_if: "match"
+    schedule: "0 12 * * *"
+    lookback_hours: 12
