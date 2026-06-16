@@ -33,7 +33,7 @@ def make_alert(**overrides) -> Alert:
         "schedule": "0 12 * * *",
         "source_file": "test.yml",
     }
-    return Alert(**{**base, **overrides})
+    return Alert(**{**base, **overrides})  # ty: ignore[invalid-argument-type]
 
 
 def make_paginator(*pages) -> MagicMock:
@@ -186,7 +186,7 @@ class TestLoadConfig:
 
     def test_raises_on_invalid_error_if(self, tmp_path: Path):
         raw = dataclasses.replace(SINGLE_ALERT)
-        raw.error_if = "bad_value"
+        raw.error_if = "bad_value"  # ty: ignore[invalid-assignment]
         config_file = write_config(tmp_path / "svc.yml", [raw])
 
         with pytest.raises(ValueError, match="invalid error_if value"):

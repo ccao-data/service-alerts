@@ -25,6 +25,9 @@ dev = [
 pythonpath = ["scripts"]
 testpaths = ["tests"]
 
+[tool.ty.environment]
+extra-paths = ["scripts"]
+
 [tool.ruff]
 line-length = 79
 
