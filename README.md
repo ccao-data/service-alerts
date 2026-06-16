@@ -15,7 +15,7 @@ queries CloudWatch Logs directly. Failures surface as failed workflow runs.
 
 ## How it works
 
-1. The `check-for-alerts` workflow runs at the top of every hour.
+1. The `check-alerts` workflow runs at the top of every hour.
 2. It calls `scripts/check_alerts.py`, passing all files in `alerts/*.yml`.
 3. For each alert, the script checks whether the alert's `schedule` fired
    within the past hour using [croniter](https://github.com/kiorky/croniter).
@@ -31,7 +31,7 @@ queries CloudWatch Logs directly. Failures surface as failed workflow runs.
 alerts/
 ├── .github/
 │   └── workflows/
-│       ├── check-for-alerts.yml  # Runs hourly; evaluates all alert configs
+│       ├── check-alerts.yml      # Runs hourly; evaluates all alert configs
 │       └── pre-commit.yml        # Runs pre-commit hooks on PRs
 ├── alerts/
 │   └── *.yml                     # One config file per monitored service

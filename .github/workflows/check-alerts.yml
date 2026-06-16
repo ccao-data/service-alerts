@@ -1,4 +1,4 @@
-name: check-for-alerts
+name: check-alerts
 
 on:
   schedule:
