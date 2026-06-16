@@ -225,7 +225,7 @@ def main() -> int:
             "authenticate with AWS or query CloudWatch."
         ),
     )
-    args = parser.parse_args(sys.argv)
+    args = parser.parse_args()
 
     return check_alerts(args.config_files, args.dry_run)
 
