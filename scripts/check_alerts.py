@@ -172,9 +172,19 @@ def evaluate_alert(alert: Alert, now: datetime, client) -> tuple[bool, str]:
 
 def check_alerts(
     config_files: list[Path],
-    dry_run: bool,
+    dry_run: bool = False,
     now: datetime | None = None,
 ) -> int:
+    """Main entrypoint for the script logic. Takes a list of config files and
+    parses them to run checks, printing what it finds to the console and
+    returning an integer representing the exit code for the script.
+
+    When `dry_run` is True, the function will check for due checks, print the
+    names of any due checks, and exit immediately after, skipping the actual
+    check logic.
+
+    The `now` parameter is provided as a helper for unit tests, to allow them
+    to control the time that the check runs without mocking."""
     if now is None:
         now = datetime.now(tz=timezone.utc)
 
@@ -208,6 +218,8 @@ def check_alerts(
 
 
 def main() -> int:
+    """Thin wrapper around `check_alerts()` that parses function args from
+    command-line options."""
     parser = argparse.ArgumentParser(description="Check CloudWatch log alerts")
     parser.add_argument(
         "config_files",
