@@ -23,16 +23,35 @@ jobs:
           enable-cache: true
           python-version: "3.14"
 
+      - name: Find due alerts
+        id: find-due
+        shell: bash
+        run: |
+          # `|| exit $?` here catches any errors in the script call and raises
+          # them, since otherwise the command substitution will suppress errors
+          due=$(uv run python scripts/check_alerts.py alerts/*.yml --dry-run) || exit $?
+          if [[ -n "$due" ]]; then
+            echo "Alerts due:"
+            echo "$due"
+            echo "alerts_due=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "No alerts due."
+            echo "alerts_due=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Mask sensitive identifiers from logs
+        if: steps.find-due.outputs.alerts_due == 'true'
         shell: bash
         run: echo "::add-mask::${{ secrets.AWS_ACCOUNT_ID }}"
 
       - name: Configure AWS credentials
+        if: steps.find-due.outputs.alerts_due == 'true'
         uses: aws-actions/configure-aws-credentials@v6.2.0
         with:
           role-to-assume: ${{ secrets.AWS_IAM_ROLE_TO_ASSUME_ARN }}
           role-duration-seconds: 900
 
       - name: Run alert checks
+        if: steps.find-due.outputs.alerts_due == 'true'
         shell: bash
         run: uv run python scripts/check_alerts.py alerts/*.yml

@@ -115,6 +115,14 @@ def is_due(schedule: str, now: datetime) -> bool:
     return elapsed_seconds < 3600
 
 
+def find_due_alerts(config_files: list[Path], now: datetime) -> list[Alert]:
+    """Load all config files and return only the alerts due at `now`."""
+    all_alerts: list[Alert] = []
+    for path in config_files:
+        all_alerts.extend(load_config(path))
+    return [a for a in all_alerts if is_due(a.schedule, now)]
+
+
 def query_cloudwatch(
     log_group: str,
     log_query: str,
@@ -162,29 +170,26 @@ def evaluate_alert(alert: Alert, now: datetime, client) -> tuple[bool, str]:
     return True, f"PASS [{alert.name}]"
 
 
-def main() -> int:
-    parser = argparse.ArgumentParser(description="Check CloudWatch log alerts")
-    parser.add_argument(
-        "config_files",
-        nargs="+",
-        type=Path,
-        metavar="CONFIG",
-        help="One or more alert YAML config files",
-    )
-    args = parser.parse_args()
+def check_alerts(
+    config_files: list[Path],
+    dry_run: bool,
+    now: datetime | None = None,
+) -> int:
+    if now is None:
+        now = datetime.now(tz=timezone.utc)
 
-    now = datetime.now(tz=timezone.utc)
-    client = boto3.client("logs")
+    due_alerts = find_due_alerts(config_files, now)
 
-    all_alerts: list[Alert] = []
-    for path in args.config_files:
-        all_alerts.extend(load_config(path))
-
-    due_alerts = [a for a in all_alerts if is_due(a.schedule, now)]
+    if dry_run:
+        for alert in due_alerts:
+            print(alert.name)
+        return 0
 
     if not due_alerts:
         print(f"No alerts due at {now.strftime('%Y-%m-%d %H:%M UTC')}.")
         return 0
+
+    client = boto3.client("logs")
 
     print(
         f"Checking {len(due_alerts)} alert(s) due at {now.strftime('%Y-%m-%d %H:%M UTC')}..."
@@ -200,6 +205,29 @@ def main() -> int:
     print(f"\n{len(results) - len(failures)}/{len(results)} alerts passed.")
 
     return 1 if failures else 0
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Check CloudWatch log alerts")
+    parser.add_argument(
+        "config_files",
+        nargs="+",
+        type=Path,
+        metavar="CONFIG",
+        help="One or more alert YAML config files",
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help=(
+            "Print a newline-separated list of alert names that are due right "
+            "now, then exit. Prints nothing if no alerts are due. Does not "
+            "authenticate with AWS or query CloudWatch."
+        ),
+    )
+    args = parser.parse_args(sys.argv)
+
+    return check_alerts(args.config_files, args.dry_run)
 
 
 if __name__ == "__main__":

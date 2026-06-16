@@ -9,7 +9,9 @@ import pytest
 import yaml
 from check_alerts import (
     Alert,
+    check_alerts,
     evaluate_alert,
+    find_due_alerts,
     is_due,
     load_config,
     query_cloudwatch,
@@ -266,6 +268,79 @@ def test_is_due(schedule: str, now: datetime, expected: bool):
 
 
 # ---------------------------------------------------------------------------
+# Test find_due_alerts()
+# ---------------------------------------------------------------------------
+
+# Schedule fires at 12:00 UTC daily; _FIND_NOW is 12:30 → alert is due.
+# A second alert scheduled monthly on the 1st is not due on the 16th.
+_FIND_NOW = datetime(2026, 6, 16, 12, 30, tzinfo=UTC)
+
+
+@pytest.fixture
+def find_due_config(tmp_path: Path) -> Path:
+    """Config with one due alert and one not-due alert."""
+    config = {
+        "alerts": [
+            {
+                "name": "Due alert",
+                "log_group": "/g",
+                "log_query": "info",
+                "error_if": "no_match",
+                "schedule": "0 12 * * *",
+                "lookback_hours": 12,
+            },
+            {
+                "name": "Not due alert",
+                "log_group": "/g",
+                "log_query": "info",
+                "error_if": "no_match",
+                "schedule": "0 12 1 * *",  # monthly — not due on the 16th
+                "lookback_hours": 12,
+            },
+        ]
+    }
+    path = tmp_path / "svc.yml"
+    path.write_text(yaml.dump(config))
+    return path
+
+
+class TestFindDueAlerts:
+    def test_returns_only_due_alerts(self, find_due_config: Path):
+        due = find_due_alerts([find_due_config], _FIND_NOW)
+        assert len(due) == 1
+        assert due[0].name == "Due alert"
+
+    def test_returns_empty_when_none_due(self, find_due_config: Path):
+        # Well past the 12:00 fire time — neither alert is within the hour window
+        now = datetime(2026, 6, 16, 15, 0, tzinfo=UTC)
+        due = find_due_alerts([find_due_config], now)
+        assert due == []
+
+    def test_aggregates_across_multiple_config_files(
+        self, tmp_path: Path, find_due_config: Path
+    ):
+        second_config = {
+            "alerts": [
+                {
+                    "name": "Another due alert",
+                    "log_group": "/h",
+                    "log_query": "error",
+                    "error_if": "match",
+                    "schedule": "0 12 * * *",
+                    "lookback_hours": 6,
+                }
+            ]
+        }
+        second_file = tmp_path / "other.yml"
+        second_file.write_text(yaml.dump(second_config))
+
+        due = find_due_alerts([find_due_config, second_file], _FIND_NOW)
+
+        assert len(due) == 2
+        assert {a.name for a in due} == {"Due alert", "Another due alert"}
+
+
+# ---------------------------------------------------------------------------
 # Test query_cloudwatch()
 # ---------------------------------------------------------------------------
 
@@ -370,3 +445,62 @@ def test_evaluate_alert_fail_message_content(
     _, message = evaluate_alert(alert, _EVAL_NOW, client)
 
     assert expected_in_message in message
+
+
+# ---------------------------------------------------------------------------
+# Test check_alerts()
+# ---------------------------------------------------------------------------
+
+
+class TestCheckAlerts:
+    def test_dry_run_prints_due_alert_names(
+        self, find_due_config: Path, capsys: pytest.CaptureFixture
+    ):
+        exit_code = check_alerts(
+            config_files=[find_due_config], dry_run=True, now=_FIND_NOW
+        )
+        captured = capsys.readouterr()
+        assert exit_code == 0
+        assert "Due alert" in captured.out
+        assert "Not due alert" not in captured.out
+
+    def test_dry_run_prints_nothing_when_none_due(
+        self, find_due_config: Path, capsys: pytest.CaptureFixture
+    ):
+        exit_code = check_alerts(
+            config_files=[find_due_config],
+            dry_run=True,
+            now=datetime(2026, 6, 16, 15, 0, tzinfo=UTC),
+        )
+        captured = capsys.readouterr()
+        assert exit_code == 0
+        assert captured.out == ""
+
+    def test_dry_run_prints_one_name_per_line(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture
+    ):
+        config = {
+            "alerts": [
+                {
+                    "name": "Alert A",
+                    "log_group": "/g",
+                    "log_query": "info",
+                    "error_if": "no_match",
+                    "schedule": "0 12 * * *",
+                    "lookback_hours": 1,
+                },
+                {
+                    "name": "Alert B",
+                    "log_group": "/g",
+                    "log_query": "error",
+                    "error_if": "match",
+                    "schedule": "0 12 * * *",
+                    "lookback_hours": 1,
+                },
+            ]
+        }
+        config_file = tmp_path / "svc.yml"
+        config_file.write_text(yaml.dump(config))
+        check_alerts(config_files=[config_file], dry_run=True, now=_FIND_NOW)
+        lines = capsys.readouterr().out.splitlines()
+        assert lines == ["Alert A", "Alert B"]
