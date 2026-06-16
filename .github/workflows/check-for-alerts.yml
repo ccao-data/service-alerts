@@ -5,6 +5,10 @@ on:
     - cron: "0 * * * *"  # Run at the top of every hour
   workflow_dispatch:  # Allow manual runs for testing
 
+env:
+  PYTHONUNBUFFERED: "1"
+  UV_FROZEN: 1
+
 jobs:
   check-alerts:
     name: Check alerts
