@@ -22,7 +22,7 @@ queries CloudWatch Logs directly. Failures surface as failed workflow runs.
 4. If the alert is due, it queries the specified CloudWatch log group for
    events matching `log_query` within the `lookback_hours` window.
 5. The result is evaluated against `error_if`. All alerts run before the
-   script exits — a single failure doesn't short-circuit the rest.
+   script exits, so that a single failure doesn't short-circuit the rest.
 6. The workflow fails if any alert fails, surfacing the issue in GitHub.
 
 ## Repo structure
@@ -75,16 +75,6 @@ alerts:
   matching log events are found (i.e. the job was silent).
 - Use `error_if: "match"` to assert a job ran **without errors** — the alert
   fires if matching log events are found (i.e. errors were logged).
-
-## Required secrets
-
-The workflow reads AWS credentials from repository secrets:
-
-| Secret | Description |
-|---|---|
-| `AWS_ACCESS_KEY_ID` | AWS access key with CloudWatch Logs read permissions. |
-| `AWS_SECRET_ACCESS_KEY` | Corresponding AWS secret key. |
-| `AWS_DEFAULT_REGION` | AWS region where the log groups reside (e.g. `us-east-1`). |
 
 ## Development
 
