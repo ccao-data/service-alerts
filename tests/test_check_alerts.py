@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import MagicMock
 
+import pytest
 import yaml
 from check_alerts import evaluate_alert, is_due, load_config, query_cloudwatch
 
@@ -40,6 +41,34 @@ def make_paginator(*pages) -> MagicMock:
 # ---------------------------------------------------------------------------
 
 
+@pytest.fixture
+def multi_alert_config(tmp_path: Path) -> Path:
+    """Write a two-alert config to a temp file and return its path."""
+    config = {
+        "alerts": [
+            {
+                "name": "A",
+                "log_group": "/g",
+                "log_query": "x",
+                "error_if": "match",
+                "schedule": "0 * * * *",
+                "lookback_hours": 1,
+            },
+            {
+                "name": "B",
+                "log_group": "/g",
+                "log_query": "y",
+                "error_if": "no_match",
+                "schedule": "0 * * * *",
+                "lookback_hours": 1,
+            },
+        ]
+    }
+    path = tmp_path / "svc.yml"
+    path.write_text(yaml.dump(config))
+    return path
+
+
 class TestLoadConfig:
     def test_returns_alerts_with_source_file(self, tmp_path: Path):
         config = {
@@ -63,31 +92,8 @@ class TestLoadConfig:
         assert alerts[0]["name"] == "My alert"
         assert alerts[0]["_source_file"] == str(config_file)
 
-    def test_returns_multiple_alerts(self, tmp_path: Path):
-        config = {
-            "alerts": [
-                {
-                    "name": "A",
-                    "log_group": "/g",
-                    "log_query": "x",
-                    "error_if": "match",
-                    "schedule": "0 * * * *",
-                    "lookback_hours": 1,
-                },
-                {
-                    "name": "B",
-                    "log_group": "/g",
-                    "log_query": "y",
-                    "error_if": "no_match",
-                    "schedule": "0 * * * *",
-                    "lookback_hours": 1,
-                },
-            ]
-        }
-        config_file = tmp_path / "svc.yml"
-        config_file.write_text(yaml.dump(config))
-
-        alerts = load_config(config_file)
+    def test_returns_multiple_alerts(self, multi_alert_config: Path):
+        alerts = load_config(multi_alert_config)
 
         assert len(alerts) == 2
         assert [a["name"] for a in alerts] == ["A", "B"]
@@ -100,34 +106,11 @@ class TestLoadConfig:
 
         assert alerts == []
 
-    def test_all_alerts_get_source_file(self, tmp_path: Path):
-        config = {
-            "alerts": [
-                {
-                    "name": "A",
-                    "log_group": "/g",
-                    "log_query": "x",
-                    "error_if": "match",
-                    "schedule": "0 * * * *",
-                    "lookback_hours": 1,
-                },
-                {
-                    "name": "B",
-                    "log_group": "/g",
-                    "log_query": "y",
-                    "error_if": "no_match",
-                    "schedule": "0 * * * *",
-                    "lookback_hours": 1,
-                },
-            ]
-        }
-        config_file = tmp_path / "svc.yml"
-        config_file.write_text(yaml.dump(config))
-
-        alerts = load_config(config_file)
+    def test_all_alerts_get_source_file(self, multi_alert_config: Path):
+        alerts = load_config(multi_alert_config)
 
         for alert in alerts:
-            assert alert["_source_file"] == str(config_file)
+            assert alert["_source_file"] == str(multi_alert_config)
 
 
 # ---------------------------------------------------------------------------
@@ -135,116 +118,98 @@ class TestLoadConfig:
 # ---------------------------------------------------------------------------
 
 
-class TestIsDue:
-    # Schedule: daily at 12:00 UTC — "0 12 * * *"
-    # prev_fire at 12:00; elapsed from 12:00 to now
-
-    def test_due_when_fired_30_minutes_ago(self):
-        # 12:30 UTC — fired 30 min ago, well within 1-hour window
-        now = datetime(2026, 6, 16, 12, 30, tzinfo=UTC)
-        assert is_due("0 12 * * *", now) is True
-
-    def test_due_when_fired_59_minutes_ago(self):
-        # 12:59 UTC — fired 59 min ago, just inside window
-        now = datetime(2026, 6, 16, 12, 59, tzinfo=UTC)
-        assert is_due("0 12 * * *", now) is True
-
-    def test_not_due_when_fired_more_than_one_hour_ago(self):
-        # 13:30 UTC — fired at 12:00, elapsed = 90 min
-        now = datetime(2026, 6, 16, 13, 30, tzinfo=UTC)
-        assert is_due("0 12 * * *", now) is False
-
-    def test_not_due_when_not_scheduled_today(self):
-        # Schedule: monthly on the 1st — "0 12 1 * *"
-        # now is the 16th; prev fire was 15+ days ago
-        now = datetime(2026, 6, 16, 12, 30, tzinfo=UTC)
-        assert is_due("0 12 1 * *", now) is False
-
-    def test_hourly_schedule_due_within_same_hour(self):
-        # Schedule: every hour — "0 * * * *"
-        # prev fire was at the top of this hour, elapsed < 60 min
-        now = datetime(2026, 6, 16, 12, 45, tzinfo=UTC)
-        assert is_due("0 * * * *", now) is True
-
-    def test_every_two_hours_due_within_window(self):
-        # Schedule fires every 2 hours: "0 */2 * * *" → 12:00, 14:00, ...
-        # now = 12:30 — prev fire at 12:00, elapsed = 30 min → due
-        now = datetime(2026, 6, 16, 12, 30, tzinfo=UTC)
-        assert is_due("0 */2 * * *", now) is True
-
-    def test_every_two_hours_not_due_outside_window(self):
-        # now = 13:30 — prev fire at 12:00, elapsed = 90 min → not due
-        now = datetime(2026, 6, 16, 13, 30, tzinfo=UTC)
-        assert is_due("0 */2 * * *", now) is False
+@pytest.mark.parametrize(
+    "schedule,now,expected",
+    [
+        # Due: prev fire within the past hour
+        (
+            "0 12 * * *",
+            datetime(2026, 6, 16, 12, 30, tzinfo=UTC),
+            True,
+        ),  # 30 min ago
+        (
+            "0 12 * * *",
+            datetime(2026, 6, 16, 12, 59, tzinfo=UTC),
+            True,
+        ),  # 59 min ago
+        (
+            "0 * * * *",
+            datetime(2026, 6, 16, 12, 45, tzinfo=UTC),
+            True,
+        ),  # hourly, 45 min ago
+        (
+            "0 */2 * * *",
+            datetime(2026, 6, 16, 12, 30, tzinfo=UTC),
+            True,
+        ),  # every 2h, 30 min ago
+        # Not due: prev fire more than an hour ago
+        (
+            "0 12 * * *",
+            datetime(2026, 6, 16, 13, 30, tzinfo=UTC),
+            False,
+        ),  # 90 min ago
+        (
+            "0 12 1 * *",
+            datetime(2026, 6, 16, 12, 30, tzinfo=UTC),
+            False,
+        ),  # monthly, 15 days ago
+        (
+            "0 */2 * * *",
+            datetime(2026, 6, 16, 13, 30, tzinfo=UTC),
+            False,
+        ),  # every 2h, 90 min ago
+    ],
+)
+def test_is_due(schedule: str, now: datetime, expected: bool):
+    assert is_due(schedule, now) is expected
 
 
 # ---------------------------------------------------------------------------
 # query_cloudwatch
 # ---------------------------------------------------------------------------
 
+_NOW = datetime(2026, 6, 16, 12, 0, tzinfo=UTC)
 
-class TestQueryCloudwatch:
-    NOW = datetime(2026, 6, 16, 12, 0, tzinfo=UTC)
 
-    def test_returns_true_when_events_found(self):
-        client = make_paginator({"events": [{"message": "info: job started"}]})
+@pytest.mark.parametrize(
+    "pages,expected",
+    [
+        ([{"events": [{"message": "hit"}]}], True),  # events on only page
+        ([{"events": []}], False),  # empty events list
+        ([{}], False),  # events key missing
+        (
+            [{"events": [{"message": "hit"}]}, {"events": []}],
+            True,
+        ),  # events on first page
+        (
+            [{"events": []}, {"events": [{"message": "hit"}]}],
+            True,
+        ),  # events on second page
+    ],
+)
+def test_query_cloudwatch_match(pages: list, expected: bool):
+    client = make_paginator(*pages)
+    assert query_cloudwatch("/test/logs", "info", 12, _NOW, client) is expected
 
-        result = query_cloudwatch("/test/logs", "info", 12, self.NOW, client)
 
-        assert result is True
+class TestQueryCloudwatchArgs:
+    """Tests that verify the correct arguments are forwarded to the paginator."""
 
-    def test_returns_false_when_no_events(self):
+    def test_passes_correct_time_window(self):
         client = make_paginator({"events": []})
 
-        result = query_cloudwatch("/test/logs", "info", 12, self.NOW, client)
-
-        assert result is False
-
-    def test_returns_false_when_events_key_missing(self):
-        client = make_paginator({})
-
-        result = query_cloudwatch("/test/logs", "info", 12, self.NOW, client)
-
-        assert result is False
-
-    def test_returns_true_on_first_page_with_events(self):
-        # Two pages: first has events, second is empty — should short-circuit
-        client = make_paginator(
-            {"events": [{"message": "hit"}]},
-            {"events": []},
-        )
-
-        result = query_cloudwatch("/test/logs", "info", 12, self.NOW, client)
-
-        assert result is True
-
-    def test_returns_true_when_events_on_second_page(self):
-        # First page empty, second page has events
-        client = make_paginator(
-            {"events": []},
-            {"events": [{"message": "hit"}]},
-        )
-
-        result = query_cloudwatch("/test/logs", "info", 12, self.NOW, client)
-
-        assert result is True
-
-    def test_passes_correct_time_window_to_paginator(self):
-        now = datetime(2026, 6, 16, 12, 0, tzinfo=UTC)
-        client = make_paginator({"events": []})
-
-        query_cloudwatch("/test/logs", "info", 12, now, client)
+        query_cloudwatch("/test/logs", "info", 12, _NOW, client)
 
         _, kwargs = client.get_paginator.return_value.paginate.call_args
-        expected_start = int((now.timestamp() - 12 * 3600) * 1000)
-        expected_end = int(now.timestamp() * 1000)
-        assert kwargs["startTime"] == expected_start
-        assert kwargs["endTime"] == expected_end
+        assert kwargs["startTime"] == int(
+            (_NOW.timestamp() - 12 * 3600) * 1000
+        )
+        assert kwargs["endTime"] == int(_NOW.timestamp() * 1000)
 
-    def test_passes_correct_filter_pattern(self):
+    def test_passes_correct_filter_pattern_and_log_group(self):
         client = make_paginator({"events": []})
 
-        query_cloudwatch("/test/logs", "my_pattern", 6, self.NOW, client)
+        query_cloudwatch("/test/logs", "my_pattern", 6, _NOW, client)
 
         _, kwargs = client.get_paginator.return_value.paginate.call_args
         assert kwargs["filterPattern"] == "my_pattern"
@@ -255,75 +220,52 @@ class TestQueryCloudwatch:
 # evaluate_alert
 # ---------------------------------------------------------------------------
 
+_EVAL_NOW = datetime(2026, 6, 16, 12, 0, tzinfo=UTC)
 
-class TestEvaluateAlert:
-    NOW = datetime(2026, 6, 16, 12, 0, tzinfo=UTC)
 
-    def _client_with_match(self, found: bool) -> MagicMock:
-        events = [{"message": "hit"}] if found else []
-        return make_paginator({"events": events})
+@pytest.mark.parametrize(
+    "error_if,found,expected_passed,expected_prefix",
+    [
+        (
+            "no_match",
+            False,
+            False,
+            "FAIL",
+        ),  # no logs found when required → fail
+        ("no_match", True, True, "PASS"),  # logs found when required → pass
+        ("match", True, False, "FAIL"),  # logs found when forbidden → fail
+        ("match", False, True, "PASS"),  # no logs found when forbidden → pass
+    ],
+)
+def test_evaluate_alert_pass_fail(
+    error_if: str, found: bool, expected_passed: bool, expected_prefix: str
+):
+    alert = make_alert(error_if=error_if)
+    events = [{"message": "hit"}] if found else []
+    client = make_paginator({"events": events})
 
-    # error_if = no_match
-    def test_no_match_alert_fails_when_no_logs_found(self):
-        alert = make_alert(error_if="no_match")
-        client = self._client_with_match(found=False)
+    passed, message = evaluate_alert(alert, _EVAL_NOW, client)
 
-        passed, message = evaluate_alert(alert, self.NOW, client)
-
-        assert passed is False
-        assert "FAIL" in message
+    assert passed is expected_passed
+    assert expected_prefix in message
+    if not expected_passed:
         assert alert["name"] in message
 
-    def test_no_match_alert_passes_when_logs_found(self):
-        alert = make_alert(error_if="no_match")
-        client = self._client_with_match(found=True)
 
-        passed, message = evaluate_alert(alert, self.NOW, client)
+@pytest.mark.parametrize(
+    "alert_override,expected_in_message",
+    [
+        ({"log_group": "/my/group"}, "/my/group"),
+        ({"lookback_hours": 6}, "6"),
+        ({"log_query": "my_pattern"}, "my_pattern"),
+    ],
+)
+def test_evaluate_alert_fail_message_content(
+    alert_override: dict, expected_in_message: str
+):
+    alert = make_alert(error_if="no_match", **alert_override)
+    client = make_paginator({"events": []})
 
-        assert passed is True
-        assert "PASS" in message
+    _, message = evaluate_alert(alert, _EVAL_NOW, client)
 
-    # error_if = match
-    def test_match_alert_fails_when_logs_found(self):
-        alert = make_alert(error_if="match")
-        client = self._client_with_match(found=True)
-
-        passed, message = evaluate_alert(alert, self.NOW, client)
-
-        assert passed is False
-        assert "FAIL" in message
-        assert alert["name"] in message
-
-    def test_match_alert_passes_when_no_logs_found(self):
-        alert = make_alert(error_if="match")
-        client = self._client_with_match(found=False)
-
-        passed, message = evaluate_alert(alert, self.NOW, client)
-
-        assert passed is True
-        assert "PASS" in message
-
-    # Message content
-    def test_fail_message_includes_log_group(self):
-        alert = make_alert(error_if="no_match", log_group="/my/group")
-        client = self._client_with_match(found=False)
-
-        _, message = evaluate_alert(alert, self.NOW, client)
-
-        assert "/my/group" in message
-
-    def test_fail_message_includes_lookback_hours(self):
-        alert = make_alert(error_if="no_match", lookback_hours=6)
-        client = self._client_with_match(found=False)
-
-        _, message = evaluate_alert(alert, self.NOW, client)
-
-        assert "6" in message
-
-    def test_fail_message_includes_log_query(self):
-        alert = make_alert(error_if="no_match", log_query="my_pattern")
-        client = self._client_with_match(found=False)
-
-        _, message = evaluate_alert(alert, self.NOW, client)
-
-        assert "my_pattern" in message
+    assert expected_in_message in message
