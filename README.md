@@ -3,7 +3,7 @@
 Scheduled GitHub Actions workflow and config files for alerting when AWS jobs
 haven't produced expected CloudWatch log output.
 
-## Background
+## Motivation
 
 CloudWatch's native alerting for "job hasn't run" scenarios is brittle: it
 relies on an invisible _evaluation range_ config variable that makes it hard
@@ -34,10 +34,13 @@ alerts/
 │       ├── check-for-alerts.yml  # Runs hourly; evaluates all alert configs
 │       └── pre-commit.yml        # Runs pre-commit hooks on PRs
 ├── alerts/
-│   └── service-spark-iasworld.yml  # One config file per monitored service
+│   └── *.yml                     # One config file per monitored service
 ├── scripts/
 │   └── check_alerts.py           # Alert evaluation logic
-└── pyproject.toml                # Python dependencies
+├── tests/
+│   └── test_*.py                 # One unit test file per module
+├── pyproject.toml                # Python config, including dependencies
+└── uv.lock                       # uv lockfile
 ```
 
 ## Adding a new alert
@@ -57,14 +60,14 @@ alerts:
 
 ### Field reference
 
-| Field | Type | Description |
-|---|---|---|
-| `name` | string | Unique human-readable name shown in workflow output and failure messages. |
-| `log_group` | string | Name of the CloudWatch log group to search. |
-| `log_query` | string | Filter pattern passed to [`filter_log_events`](https://docs.aws.amazon.com/AmazonCloudWatchLogs/latest/APIReference/API_FilterLogEvents.html). Supports CloudWatch filter pattern syntax. |
-| `error_if` | `"no_match"` \| `"match"` | `"no_match"`: fail if **no** events match (use to detect a job that hasn't run). `"match"`: fail if **any** events match (use to detect errors). |
-| `schedule` | string | Cron expression (5-field, UTC) for when the alert should be evaluated. The workflow runs hourly; alerts whose most recent scheduled time falls within the past hour are checked. |
-| `lookback_hours` | integer | Number of hours back from the check time to search for matching log events. |
+| Field            | Type                      | Description                                                                                                                                                                               |
+|------------------|---------------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `name`           | string                    | Unique human-readable name shown in workflow output and failure messages.                                                                                                                 |
+| `log_group`      | string                    | Name of the CloudWatch log group to search.                                                                                                                                               |
+| `log_query`      | string                    | Filter pattern passed to [`filter_log_events`](https://docs.aws.amazon.com/AmazonCloudWatchLogs/latest/APIReference/API_FilterLogEvents.html). Supports CloudWatch filter pattern syntax. |
+| `error_if`       | `"no_match"` \| `"match"` | `"no_match"`: fail if **no** events match (use to detect a job that hasn't run). `"match"`: fail if **any** events match (use to detect errors).                                          |
+| `schedule`       | string                    | Cron expression (5-field, UTC) for when the alert should be evaluated. The workflow runs hourly; alerts whose most recent scheduled time falls within the past hour are checked.          |
+| `lookback_hours` | integer                   | Number of hours back from the check time to search for matching log events.                                                                                                               |
 
 ### Choosing `error_if`
 
