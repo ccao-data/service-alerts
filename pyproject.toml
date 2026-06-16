@@ -1,4 +1,5 @@
 [build-system]
+# Support editable installations
 requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
@@ -21,14 +22,17 @@ dev = [
 ]
 
 [tool.pytest.ini_options]
+# Make sure pytest knows where our modules and our tests live
 pythonpath = ["scripts"]
 testpaths = ["tests"]
 
 [tool.ty.environment]
+# Make sure ty knows where our modules live
 extra-paths = ["scripts"]
 
 [tool.ruff]
 line-length = 79
 
 [tool.ruff.lint]
+# Extend ruff to check import sort order
 extend-select = ["I"]
