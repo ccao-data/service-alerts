@@ -73,7 +73,13 @@ def load_config(path: Path) -> list[Alert]:
         data = yaml.safe_load(f)
 
     alerts = []
-    required_alert_fields = [field.name for field in dataclasses.fields(Alert)]
+    required_alert_fields = [
+        field.name
+        for field in dataclasses.fields(Alert)
+        # Exclude `source_file` from the list of required fields, since we'll
+        # specify it manually during parsing
+        if field.name != "source_file"
+    ]
     for i, raw in enumerate(data.get("alerts", [])):
         missing = [f for f in required_alert_fields if f not in raw]
         if missing:
@@ -177,7 +183,7 @@ def main() -> int:
     due_alerts = [a for a in all_alerts if is_due(a.schedule, now)]
 
     if not due_alerts:
-        print("No alerts due at this time.")
+        print(f"No alerts due at {now.strftime('%Y-%m-%d %H:%M UTC')}.")
         return 0
 
     print(
