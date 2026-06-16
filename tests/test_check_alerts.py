@@ -6,6 +6,7 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
+import pytest_mock
 import yaml
 from check_alerts import (
     Alert,
@@ -504,3 +505,116 @@ class TestCheckAlerts:
         check_alerts(config_files=[config_file], dry_run=True, now=_FIND_NOW)
         lines = capsys.readouterr().out.splitlines()
         assert lines == ["Alert A", "Alert B"]
+
+    def test_returns_0_and_prints_message_when_no_alerts_due(
+        self, find_due_config: Path, capsys: pytest.CaptureFixture
+    ):
+        now = datetime(2026, 6, 16, 15, 0, tzinfo=UTC)
+        exit_code = check_alerts(
+            config_files=[find_due_config], dry_run=False, now=now
+        )
+        assert exit_code == 0
+        assert "No alerts due" in capsys.readouterr().out
+
+    def test_does_not_call_boto3_when_no_alerts_due(
+        self, find_due_config: Path, mocker: pytest_mock.MockerFixture
+    ):
+        mock_boto3 = mocker.patch("check_alerts.boto3")
+        now = datetime(2026, 6, 16, 15, 0, tzinfo=UTC)
+        check_alerts(config_files=[find_due_config], dry_run=False, now=now)
+        mock_boto3.client.assert_not_called()
+
+    def test_returns_0_when_all_alerts_pass(
+        self, find_due_config: Path, mocker: pytest_mock.MockerFixture
+    ):
+        # "Due alert" is error_if=no_match; events found → pass
+        mocker.patch(
+            "check_alerts.boto3.client",
+            return_value=make_paginator({"events": [{"message": "hit"}]}),
+        )
+        exit_code = check_alerts(
+            config_files=[find_due_config], dry_run=False, now=_FIND_NOW
+        )
+        assert exit_code == 0
+
+    def test_returns_1_when_any_alert_fails(
+        self, find_due_config: Path, mocker: pytest_mock.MockerFixture
+    ):
+        # "Due alert" is error_if=no_match; no events found → fail
+        mocker.patch(
+            "check_alerts.boto3.client",
+            return_value=make_paginator({"events": []}),
+        )
+        exit_code = check_alerts(
+            config_files=[find_due_config], dry_run=False, now=_FIND_NOW
+        )
+        assert exit_code == 1
+
+    def test_prints_summary_on_all_pass(
+        self,
+        find_due_config: Path,
+        mocker: pytest_mock.MockerFixture,
+        capsys: pytest.CaptureFixture,
+    ):
+        mocker.patch(
+            "check_alerts.boto3.client",
+            return_value=make_paginator({"events": [{"message": "hit"}]}),
+        )
+        check_alerts(
+            config_files=[find_due_config], dry_run=False, now=_FIND_NOW
+        )
+        assert "1/1 alerts passed" in capsys.readouterr().out
+
+    def test_prints_summary_on_failure(
+        self,
+        find_due_config: Path,
+        mocker: pytest_mock.MockerFixture,
+        capsys: pytest.CaptureFixture,
+    ):
+        mocker.patch(
+            "check_alerts.boto3.client",
+            return_value=make_paginator({"events": []}),
+        )
+        check_alerts(
+            config_files=[find_due_config], dry_run=False, now=_FIND_NOW
+        )
+        assert "0/1 alerts passed" in capsys.readouterr().out
+
+    def test_all_alerts_checked_despite_failure(
+        self,
+        tmp_path: Path,
+        mocker: pytest_mock.MockerFixture,
+        capsys: pytest.CaptureFixture,
+    ):
+        config = {
+            "alerts": [
+                {
+                    "name": "Failing alert",
+                    "log_group": "/g",
+                    "log_query": "info",
+                    "error_if": "no_match",
+                    "schedule": "0 12 * * *",
+                    "lookback_hours": 1,
+                },
+                {
+                    "name": "Passing alert",
+                    "log_group": "/g",
+                    "log_query": "error",
+                    "error_if": "match",
+                    "schedule": "0 12 * * *",
+                    "lookback_hours": 1,
+                },
+            ]
+        }
+        config_file = tmp_path / "svc.yml"
+        config_file.write_text(yaml.dump(config))
+
+        mocker.patch(
+            "check_alerts.boto3.client",
+            return_value=make_paginator({"events": []}, {"events": []}),
+        )
+        exit_code = check_alerts(
+            config_files=[config_file], dry_run=False, now=_FIND_NOW
+        )
+        assert exit_code == 1
+        assert "1/2 alerts passed" in capsys.readouterr().out
