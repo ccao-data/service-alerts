@@ -1,12 +1,19 @@
 """Unit tests for check_alerts.py."""
 
+import dataclasses
 from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
 import yaml
-from check_alerts import evaluate_alert, is_due, load_config, query_cloudwatch
+from check_alerts import (
+    Alert,
+    evaluate_alert,
+    is_due,
+    load_config,
+    query_cloudwatch,
+)
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -15,8 +22,8 @@ from check_alerts import evaluate_alert, is_due, load_config, query_cloudwatch
 UTC = timezone.utc
 
 
-def make_alert(**overrides) -> dict:
-    """Return a minimal valid alert dict, with optional field overrides."""
+def make_alert(**overrides) -> Alert:
+    """Return a minimal valid Alert, with optional field overrides."""
     base = {
         "name": "Test alert",
         "log_group": "/test/logs",
@@ -24,9 +31,9 @@ def make_alert(**overrides) -> dict:
         "error_if": "no_match",
         "lookback_hours": 12,
         "schedule": "0 12 * * *",
-        "_source_file": "test.yml",
+        "source_file": "test.yml",
     }
-    return {**base, **overrides}
+    return Alert(**{**base, **overrides})
 
 
 def make_paginator(*pages) -> MagicMock:
@@ -36,85 +43,179 @@ def make_paginator(*pages) -> MagicMock:
     return client
 
 
+def write_config(path: Path, alerts: list[Alert]) -> Path:
+    """Write an alerts config YAML to *path* and return it."""
+    path.write_text(
+        yaml.dump({"alerts": [dataclasses.asdict(alert) for alert in alerts]})
+    )
+    return path
+
+
+def write_raw_config(path: Path, alerts: list[dict]) -> Path:
+    """Alternate version of `write_config()` that writes a raw dict to the
+    config YAML. Useful when writing"""
+    path.write_text(yaml.dump({"alerts": alerts}))
+    return path
+
+
 # ---------------------------------------------------------------------------
-# load_config
+# Test Alert dataclass
 # ---------------------------------------------------------------------------
+
+
+class TestAlert:
+    def test_valid_alert_constructs(self):
+        alert = make_alert()
+        assert alert.name == "Test alert"
+
+    @pytest.mark.parametrize("error_if", ["match", "no_match"])
+    def test_valid_error_if_values(self, error_if: str):
+        alert = make_alert(error_if=error_if)
+        assert alert.error_if == error_if
+
+    def test_invalid_error_if_raises(self):
+        with pytest.raises(ValueError, match="invalid error_if value"):
+            make_alert(error_if="bad_value")
+
+    @pytest.mark.parametrize("lookback_hours", [0, -1, -100])
+    def test_nonpositive_lookback_hours_raises(self, lookback_hours: int):
+        with pytest.raises(
+            ValueError, match="lookback_hours must be a positive integer"
+        ):
+            make_alert(lookback_hours=lookback_hours)
+
+
+# ---------------------------------------------------------------------------
+# Test load_config()
+# ---------------------------------------------------------------------------
+
+SINGLE_ALERT = make_alert()
+
+
+@pytest.fixture
+def single_alert_config(tmp_path: Path) -> Path:
+    """Write a single-alert config to a temp file and return its path."""
+    return write_config(tmp_path / "svc.yml", [SINGLE_ALERT])
+
+
+MULTI_ALERT_A = make_alert(
+    name="A",
+    log_group="/g",
+    log_query="x",
+    error_if="match",
+    schedule="0 * * * *",
+    lookback_hours=1,
+)
+MULTI_ALERT_B = make_alert(
+    name="B",
+    log_group="/g",
+    log_query="y",
+    error_if="no_match",
+    schedule="0 * * * *",
+    lookback_hours=1,
+)
 
 
 @pytest.fixture
 def multi_alert_config(tmp_path: Path) -> Path:
     """Write a two-alert config to a temp file and return its path."""
-    config = {
-        "alerts": [
-            {
-                "name": "A",
-                "log_group": "/g",
-                "log_query": "x",
-                "error_if": "match",
-                "schedule": "0 * * * *",
-                "lookback_hours": 1,
-            },
-            {
-                "name": "B",
-                "log_group": "/g",
-                "log_query": "y",
-                "error_if": "no_match",
-                "schedule": "0 * * * *",
-                "lookback_hours": 1,
-            },
-        ]
-    }
-    path = tmp_path / "svc.yml"
-    path.write_text(yaml.dump(config))
-    return path
+    return write_config(
+        tmp_path / "svc.yml",
+        [MULTI_ALERT_A, MULTI_ALERT_B],
+    )
 
 
 class TestLoadConfig:
-    def test_returns_alerts_with_source_file(self, tmp_path: Path):
-        config = {
-            "alerts": [
-                {
-                    "name": "My alert",
-                    "log_group": "/my/group",
-                    "log_query": "error",
-                    "error_if": "match",
-                    "schedule": "0 12 * * *",
-                    "lookback_hours": 6,
-                }
-            ]
-        }
-        config_file = tmp_path / "my-service.yml"
-        config_file.write_text(yaml.dump(config))
-
-        alerts = load_config(config_file)
+    def test_returns_alert_objects(self, single_alert_config: Path):
+        alerts = load_config(single_alert_config)
 
         assert len(alerts) == 1
-        assert alerts[0]["name"] == "My alert"
-        assert alerts[0]["_source_file"] == str(config_file)
+        assert isinstance(alerts[0], Alert)
+        assert alerts[0].name == SINGLE_ALERT.name
+
+    def test_sets_source_file(self, single_alert_config: Path):
+        alerts = load_config(single_alert_config)
+
+        assert alerts[0].source_file == str(single_alert_config)
 
     def test_returns_multiple_alerts(self, multi_alert_config: Path):
         alerts = load_config(multi_alert_config)
 
         assert len(alerts) == 2
-        assert [a["name"] for a in alerts] == ["A", "B"]
-
-    def test_returns_empty_list_when_no_alerts_key(self, tmp_path: Path):
-        config_file = tmp_path / "empty.yml"
-        config_file.write_text(yaml.dump({}))
-
-        alerts = load_config(config_file)
-
-        assert alerts == []
+        assert [a.name for a in alerts] == [
+            MULTI_ALERT_A.name,
+            MULTI_ALERT_B.name,
+        ]
 
     def test_all_alerts_get_source_file(self, multi_alert_config: Path):
         alerts = load_config(multi_alert_config)
 
         for alert in alerts:
-            assert alert["_source_file"] == str(multi_alert_config)
+            assert alert.source_file == str(multi_alert_config)
+
+    def test_raises_when_no_alerts_key(self, tmp_path: Path):
+        config_file = tmp_path / "empty.yml"
+        config_file.write_text(yaml.dump({}))
+
+        with pytest.raises(ValueError, match="No top-level"):
+            load_config(config_file)
+
+    @pytest.mark.parametrize(
+        "missing_field",
+        [
+            "name",
+            "log_group",
+            "log_query",
+            "error_if",
+            "schedule",
+            "lookback_hours",
+        ],
+    )
+    def test_raises_on_missing_required_field(
+        self, tmp_path: Path, missing_field: str
+    ):
+        raw_dict = {
+            k: v
+            for k, v in dataclasses.asdict(SINGLE_ALERT).items()
+            if k != missing_field
+        }
+        config_file = write_raw_config(tmp_path / "svc.yml", [raw_dict])
+
+        with pytest.raises(ValueError, match=missing_field):
+            load_config(config_file)
+
+    def test_raises_on_invalid_error_if(self, tmp_path: Path):
+        raw = dataclasses.replace(SINGLE_ALERT)
+        raw.error_if = "bad_value"
+        config_file = write_config(tmp_path / "svc.yml", [raw])
+
+        with pytest.raises(ValueError, match="invalid error_if value"):
+            load_config(config_file)
+
+    def test_raises_on_nonpositive_lookback_hours(self, tmp_path: Path):
+        raw = dataclasses.replace(SINGLE_ALERT)
+        raw.lookback_hours = 0
+        config_file = write_config(tmp_path / "svc.yml", [raw])
+
+        with pytest.raises(
+            ValueError, match="lookback_hours must be a positive integer"
+        ):
+            load_config(config_file)
+
+    def test_error_message_includes_file_path(self, tmp_path: Path):
+        raw_dict = {
+            k: v
+            for k, v in dataclasses.asdict(SINGLE_ALERT).items()
+            if k != "lookback_hours"
+        }
+        config_file = write_raw_config(tmp_path / "svc.yml", [raw_dict])
+
+        with pytest.raises(ValueError, match=str(config_file)):
+            load_config(config_file)
 
 
 # ---------------------------------------------------------------------------
-# is_due
+# Test is_due()
 # ---------------------------------------------------------------------------
 
 
@@ -165,7 +266,7 @@ def test_is_due(schedule: str, now: datetime, expected: bool):
 
 
 # ---------------------------------------------------------------------------
-# query_cloudwatch
+# Test query_cloudwatch()
 # ---------------------------------------------------------------------------
 
 _NOW = datetime(2026, 6, 16, 12, 0, tzinfo=UTC)
@@ -217,7 +318,7 @@ class TestQueryCloudwatchArgs:
 
 
 # ---------------------------------------------------------------------------
-# evaluate_alert
+# Test evaluate_alert()
 # ---------------------------------------------------------------------------
 
 _EVAL_NOW = datetime(2026, 6, 16, 12, 0, tzinfo=UTC)
@@ -249,7 +350,7 @@ def test_evaluate_alert_pass_fail(
     assert passed is expected_passed
     assert expected_prefix in message
     if not expected_passed:
-        assert alert["name"] in message
+        assert alert.name in message
 
 
 @pytest.mark.parametrize(

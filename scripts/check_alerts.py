@@ -10,22 +10,94 @@ the script exits; it exits non-zero if any alert failed.
 """
 
 import argparse
+import dataclasses
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Literal
 
 import boto3
 import yaml
 from croniter import croniter
 
 
-def load_config(path: Path) -> list[dict]:
-    """Load and return the list of alerts from a YAML config file."""
+@dataclasses.dataclass
+class Alert:
+    """Configuration for a single CloudWatch log alert.
+
+    Attributes:
+        name: Unique human-readable name shown in output and failure messages.
+        log_group: CloudWatch log group to search.
+        log_query: Filter pattern passed to `filter_log_events`. Supports
+            CloudWatch filter pattern syntax.
+        error_if: Condition that triggers a failure. `"no_match"` fails when
+            no events are found (e.g. job hasn't run); `"match"` fails when events
+            are found (e.g. errors were present in logs).
+        schedule: 5-field UTC cron expression for when this alert should be
+            evaluated. Checked against the past hour each time the workflow runs.
+        lookback_hours: How far back (in hours) to search for matching log events.
+            Must be a positive integer.
+        source_file: Path to the config file this alert was loaded from.
+    """
+
+    name: str
+    log_group: str
+    log_query: str
+    error_if: Literal["match", "no_match"]
+    schedule: str
+    lookback_hours: int
+    source_file: str
+
+    def __post_init__(self) -> None:
+        """Field validation for this dataclass."""
+        valid_error_if = frozenset({"match", "no_match"})
+        if self.error_if not in valid_error_if:
+            raise ValueError(
+                f"Alert '{self.name}': invalid error_if value '{self.error_if}'. "
+                f"Must be one of: {sorted(valid_error_if)}"
+            )
+        if self.lookback_hours <= 0:
+            raise ValueError(
+                f"Alert '{self.name}': lookback_hours must be a positive integer, "
+                f"got {self.lookback_hours!r}"
+            )
+
+
+def load_config(path: Path) -> list[Alert]:
+    """Load, validate, and return the list of alerts from a YAML config file.
+
+    Raises:
+        ValueError: If any alert is missing required fields or has invalid values.
+    """
     with path.open() as f:
         data = yaml.safe_load(f)
-    alerts = data.get("alerts", [])
-    for alert in alerts:
-        alert["_source_file"] = str(path)
+
+    alerts = []
+    required_alert_fields = [field.name for field in dataclasses.fields(Alert)]
+    for i, raw in enumerate(data.get("alerts", [])):
+        missing = [f for f in required_alert_fields if f not in raw]
+        if missing:
+            label = raw.get("name", f"alert #{i + 1}")
+            raise ValueError(
+                f"{path}: {label}: missing required fields: {missing}"
+            )
+        try:
+            alert = Alert(
+                name=raw["name"],
+                log_group=raw["log_group"],
+                log_query=raw["log_query"],
+                error_if=raw["error_if"],
+                schedule=raw["schedule"],
+                lookback_hours=raw["lookback_hours"],
+                source_file=str(path),
+            )
+        except ValueError as exc:
+            raise ValueError(f"{path}: {exc}") from exc
+        alerts.append(alert)
+
+    if not alerts:
+        raise ValueError(f"{path}: No top-level `alerts` key found")
+
     return alerts
 
 
@@ -61,33 +133,27 @@ def query_cloudwatch(
     return False
 
 
-def evaluate_alert(alert: dict, now: datetime, client) -> tuple[bool, str]:
-    """
-    Evaluate a single alert. Returns (passed, message).
+def evaluate_alert(alert: Alert, now: datetime, client) -> tuple[bool, str]:
+    """Evaluate a single alert. Returns (passed, message).
+
     passed=True means no error condition was triggered.
     """
-    name = alert["name"]
-    log_group = alert["log_group"]
-    log_query = alert["log_query"]
-    error_if = alert["error_if"]
-    lookback_hours = alert["lookback_hours"]
-
     found_match = query_cloudwatch(
-        log_group, log_query, lookback_hours, now, client
+        alert.log_group, alert.log_query, alert.lookback_hours, now, client
     )
 
-    if error_if == "no_match" and not found_match:
+    if alert.error_if == "no_match" and not found_match:
         return False, (
-            f"FAIL [{name}]: No logs matching '{log_query}' found in "
-            f"'{log_group}' in the past {lookback_hours}h"
+            f"FAIL [{alert.name}]: No logs matching '{alert.log_query}' found in "
+            f"'{alert.log_group}' in the past {alert.lookback_hours}h"
         )
-    if error_if == "match" and found_match:
+    if alert.error_if == "match" and found_match:
         return False, (
-            f"FAIL [{name}]: Logs matching '{log_query}' found in "
-            f"'{log_group}' in the past {lookback_hours}h"
+            f"FAIL [{alert.name}]: Logs matching '{alert.log_query}' found in "
+            f"'{alert.log_group}' in the past {alert.lookback_hours}h"
         )
 
-    return True, f"PASS [{name}]"
+    return True, f"PASS [{alert.name}]"
 
 
 def main() -> int:
@@ -104,11 +170,11 @@ def main() -> int:
     now = datetime.now(tz=timezone.utc)
     client = boto3.client("logs")
 
-    all_alerts: list[dict] = []
+    all_alerts: list[Alert] = []
     for path in args.config_files:
         all_alerts.extend(load_config(path))
 
-    due_alerts = [a for a in all_alerts if is_due(a["schedule"], now)]
+    due_alerts = [a for a in all_alerts if is_due(a.schedule, now)]
 
     if not due_alerts:
         print("No alerts due at this time.")
