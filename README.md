@@ -97,6 +97,6 @@ uv sync --extra dev
 # Run tests
 uv run pytest
 
-# Run pre-commit hooks
-uv run pre-commit run --all-files
+# Run the script
+uv run python scripts/check_alerts.py alerts/*.yml
 ```
