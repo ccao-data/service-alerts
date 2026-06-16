@@ -12,7 +12,6 @@ env:
 
 jobs:
   check-alerts:
-    name: Check alerts
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -50,6 +49,7 @@ jobs:
         uses: aws-actions/configure-aws-credentials@v6.2.0
         with:
           role-to-assume: ${{ secrets.AWS_IAM_ROLE_TO_ASSUME_ARN }}
+          aws-region: us-east-1
           role-duration-seconds: 900
 
       - name: Run alert checks
