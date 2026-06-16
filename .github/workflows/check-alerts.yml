@@ -4,6 +4,7 @@ on:
   schedule:
     - cron: "0 * * * *"  # Run at the top of every hour
   workflow_dispatch:  # Allow manual runs for testing
+  pull_request:
 
 env:
   PYTHONUNBUFFERED: "1"
