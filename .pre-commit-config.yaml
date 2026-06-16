@@ -20,4 +20,4 @@ repos:
     rev: v0.0.49
     hooks:
       - id: ty
-        args: [--frozen]
+        args: [--frozen, --all-extras]
