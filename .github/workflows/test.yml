@@ -28,5 +28,4 @@ jobs:
 
       - name: Run Python tests
         shell: bash
-        working-directory: python
         run: uv run --extra dev pytest
