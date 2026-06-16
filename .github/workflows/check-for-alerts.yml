@@ -23,12 +23,16 @@ jobs:
           enable-cache: true
           python-version: "3.14"
 
+      - name: Mask sensitive identifiers from logs
+        shell: bash
+        run: echo "::add-mask::${{ secrets.AWS_ACCOUNT_ID }}"
+
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v6.2.0
         with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ secrets.AWS_DEFAULT_REGION }}
+          role-to-assume: ${{ secrets.AWS_IAM_ROLE_TO_ASSUME_ARN }}
+          role-duration-seconds: 900
 
       - name: Run alert checks
+        shell: bash
         run: uv run python scripts/check_alerts.py alerts/*.yml
