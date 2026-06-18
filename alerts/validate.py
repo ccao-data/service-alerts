@@ -24,7 +24,7 @@ def validate_configs(paths: list[Path]) -> int:
             alerts = load_config(path)
             print(f"OK ({len(alerts)} alert(s)): {path}")
         except (ValueError, Exception) as exc:
-            print(f"FAIL: {exc}")
+            print(f"FAIL [{str(path)}]: {exc}")
             failed.append(str(path))
 
     if failed:

@@ -121,7 +121,7 @@ def required_fields(dataclass: Type[DataclassType]) -> list[str]:
         field.name
         for field in dataclasses.fields(dataclass)
         if field.default is dataclasses.MISSING
-        and field.default_factory is dataclasses.MISSING  # type: ignore[misc]
+        and field.default_factory is dataclasses.MISSING
     ]
 
 

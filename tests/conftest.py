@@ -9,6 +9,10 @@ import yaml
 
 from alerts.models import Alert
 
+# ---------------------------------------------------------------------------
+# Helper functions
+# ---------------------------------------------------------------------------
+
 
 def make_alert(**overrides) -> Alert:
     """Return a minimal valid Alert, with optional field overrides."""

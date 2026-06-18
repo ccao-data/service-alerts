@@ -23,29 +23,29 @@ _EVAL_NOW = datetime(2026, 6, 16, 12, 0, tzinfo=UTC)
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize(
-    "pages,expected",
-    [
-        ([{"events": [{"message": "hit"}]}], True),  # events on only page
-        ([{"events": []}], False),  # empty events list
-        ([{}], False),  # events key missing
-        (
-            [{"events": [{"message": "hit"}]}, {"events": []}],
-            True,
-        ),  # events on first page
-        (
-            [{"events": []}, {"events": [{"message": "hit"}]}],
-            True,
-        ),  # events on second page
-    ],
-)
-def test_query_cloudwatch_match(pages: list, expected: bool):
-    client = make_paginator(*pages)
-    assert query_cloudwatch("/test/logs", "info", 12, _NOW, client) is expected
-
-
-class TestQueryCloudwatchArgs:
-    """Tests that verify the correct arguments are forwarded to the paginator."""
+class TestQueryCloudWatch:
+    @pytest.mark.parametrize(
+        "pages,expected",
+        [
+            ([{"events": [{"message": "hit"}]}], True),  # events on only page
+            ([{"events": []}], False),  # empty events list
+            ([{}], False),  # events key missing
+            (
+                [{"events": [{"message": "hit"}]}, {"events": []}],
+                True,
+            ),  # events on first page
+            (
+                [{"events": []}, {"events": [{"message": "hit"}]}],
+                True,
+            ),  # events on second page
+        ],
+    )
+    def test_query_cloudwatch_match(self, pages: list, expected: bool):
+        client = make_paginator(*pages)
+        assert (
+            query_cloudwatch("/test/logs", "info", 12, _NOW, client)
+            is expected
+        )
 
     def test_passes_correct_time_window(self):
         client = make_paginator({"events": []})
@@ -73,52 +73,66 @@ class TestQueryCloudwatchArgs:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize(
-    "error_if,found,expected_passed,expected_prefix",
-    [
-        (
-            "no_match",
-            False,
-            False,
-            "FAIL",
-        ),  # no logs found when required → fail
-        ("no_match", True, True, "PASS"),  # logs found when required → pass
-        ("match", True, False, "FAIL"),  # logs found when forbidden → fail
-        ("match", False, True, "PASS"),  # no logs found when forbidden → pass
-    ],
-)
-def test_evaluate_alert_pass_fail(
-    error_if: str, found: bool, expected_passed: bool, expected_prefix: str
-):
-    alert = make_alert(error_if=error_if)
-    events = [{"message": "hit"}] if found else []
-    client = make_paginator({"events": events})
+class TestEvaluateAlert:
+    @pytest.mark.parametrize(
+        "error_if,found,expected_passed,expected_prefix",
+        [
+            (
+                "no_match",
+                False,
+                False,
+                "FAIL",
+            ),  # no logs found when required → fail
+            (
+                "no_match",
+                True,
+                True,
+                "PASS",
+            ),  # logs found when required → pass
+            ("match", True, False, "FAIL"),  # logs found when forbidden → fail
+            (
+                "match",
+                False,
+                True,
+                "PASS",
+            ),  # no logs found when forbidden → pass
+        ],
+    )
+    def test_evaluate_alert_pass_fail(
+        self,
+        error_if: str,
+        found: bool,
+        expected_passed: bool,
+        expected_prefix: str,
+    ):
+        alert = make_alert(error_if=error_if)
+        events = [{"message": "hit"}] if found else []
+        client = make_paginator({"events": events})
 
-    passed, message = evaluate_alert(alert, _EVAL_NOW, client)
+        passed, message = evaluate_alert(alert, _EVAL_NOW, client)
 
-    assert passed is expected_passed
-    assert expected_prefix in message
-    if not expected_passed:
-        assert alert.name in message
+        assert passed is expected_passed
+        assert expected_prefix in message
+        if not expected_passed:
+            assert alert.name in message
 
+    @pytest.mark.parametrize(
+        "alert_override,expected_in_message",
+        [
+            ({"log_group": "/my/group"}, "/my/group"),
+            ({"lookback_hours": 6}, "6"),
+            ({"log_query": "my_pattern"}, "my_pattern"),
+        ],
+    )
+    def test_evaluate_alert_fail_message_content(
+        self, alert_override: dict, expected_in_message: str
+    ):
+        alert = make_alert(error_if="no_match", **alert_override)
+        client = make_paginator({"events": []})
 
-@pytest.mark.parametrize(
-    "alert_override,expected_in_message",
-    [
-        ({"log_group": "/my/group"}, "/my/group"),
-        ({"lookback_hours": 6}, "6"),
-        ({"log_query": "my_pattern"}, "my_pattern"),
-    ],
-)
-def test_evaluate_alert_fail_message_content(
-    alert_override: dict, expected_in_message: str
-):
-    alert = make_alert(error_if="no_match", **alert_override)
-    client = make_paginator({"events": []})
+        _, message = evaluate_alert(alert, _EVAL_NOW, client)
 
-    _, message = evaluate_alert(alert, _EVAL_NOW, client)
-
-    assert expected_in_message in message
+        assert expected_in_message in message
 
 
 # ---------------------------------------------------------------------------
