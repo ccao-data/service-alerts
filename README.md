@@ -24,6 +24,10 @@ queries CloudWatch Logs directly. Failures surface as failed workflow runs.
 5. The result is evaluated against `error_if`. All alerts run before the
    script exits, so that a single failure doesn't short-circuit the rest.
 6. The workflow fails if any alert fails, surfacing the issue in GitHub.
+   The workflow will also notify configured [AWS SNS
+   topics](https://docs.aws.amazon.com/sns/latest/dg/sns-create-topic.html)
+   for each alert that has failed, in order to notify stakeholders of any
+   issues.
 
 ## Repo structure
 
@@ -56,6 +60,7 @@ alerts:
     error_if: "no_match"         # Required. "no_match" or "match" (see below).
     schedule: "0 14 * * 1-5"     # Required. Cron expression for when to check.
     lookback_hours: 12           # Required. How far back to search for logs.
+    aws_sns_topic: topic-name    # Required. The name of the AWS SNS topic to notify on failure.
 ```
 
 ### Field reference
@@ -68,6 +73,7 @@ alerts:
 | `error_if`       | `"no_match"` \| `"match"` | `"no_match"`: fail if **no** events match (use to detect a job that hasn't run). `"match"`: fail if **any** events match (use to detect errors).                                          |
 | `schedule`       | string                    | Cron expression (5-field, UTC) for when the alert should be evaluated. The workflow runs hourly; alerts whose most recent scheduled time falls within the past hour are checked.          |
 | `lookback_hours` | integer                   | Number of hours back from the check time to search for matching log events.                                                                                                               |
+| `aws_sns_topic`  | string                    | Name of the AWS SNS topic to notify on failure. This should _not_ be an ARN, since ARNs contain our AWS account ID, which is not public.                                                  |
 
 ### Choosing `error_if`
 
@@ -79,6 +85,9 @@ alerts:
 ## Development
 
 This project uses [uv](https://docs.astral.sh/uv/) for dependency management.
+[Authenticating with
+AWS](https://github.com/ccao-data/wiki/blob/master/How-To/Setup-the-AWS-Command-Line-Interface-and-Multi-factor-Authentication.md)
+is necessary in order to check alerts.
 
 ```bash
 # Install dependencies (including dev tools)

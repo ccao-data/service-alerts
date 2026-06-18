@@ -32,7 +32,7 @@ jobs:
         run: |
           # `|| exit $?` here catches any errors in the script call and raises
           # them, since otherwise the command substitution will suppress errors
-          due=$(uv run python scripts/check_alerts.py alerts/*.yml --dry-run) || exit $?
+          due=$(uv run python -m alerts.check config/*.yml --dry-run) || exit $?
           if [[ -n "$due" ]]; then
             echo "Alerts due:"
             echo "$due"
@@ -57,5 +57,23 @@ jobs:
 
       - name: Run alert checks
         if: steps.find-due.outputs.alerts_due == 'true'
+        id: run-checks
         shell: bash
-        run: uv run python scripts/check_alerts.py alerts/*.yml
+        run: |
+          results=$(uv run python -m alerts.check config/*.yml --format json) || exit $?
+          echo "Results:"
+          echo "$results"
+          echo "results=$results" >> "$GITHUB_OUTPUT"
+          echo "check_failed=$(echo "$results" | jq -r '.any_failed')" >> "$GITHUB_OUTPUT"
+
+      - name: Notify failed alerts
+        if: steps.run-checks.outputs.check_failed == 'true'
+        shell: bash
+        run: |
+          echo '${{ steps.run-checks.outputs.results }}' \
+            | uv run python -m alerts.notify \
+                --account-id ${{ secrets.AWS_ACCOUNT_ID }}
+
+      - name: Fail if any checks failed
+        if: steps.run-checks.outputs.check_failed == 'true'
+        run: exit 1

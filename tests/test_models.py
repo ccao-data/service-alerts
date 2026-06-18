@@ -1,0 +1,303 @@
+"""Unit tests for alerts/models.py."""
+
+import dataclasses
+from datetime import datetime, timezone
+from pathlib import Path
+
+import pytest
+import yaml
+
+from alerts.models import (
+    Alert,
+    Result,
+    ResultContainer,
+    find_due_alerts,
+    is_due,
+    load_config,
+    load_results,
+    required_fields,
+)
+from tests.conftest import (
+    MULTI_ALERT_A,
+    MULTI_ALERT_B,
+    SINGLE_ALERT,
+    make_alert,
+    write_raw_config,
+)
+
+UTC = timezone.utc
+
+
+# ---------------------------------------------------------------------------
+# Test Alert dataclass
+# ---------------------------------------------------------------------------
+
+
+class TestAlert:
+    def test_valid_alert_constructs(self):
+        alert = make_alert()
+        assert alert.name == "Test alert"
+
+    def test_long_name_raises(self):
+        with pytest.raises(ValueError, match="must be <"):
+            make_alert(name="a" * 101)
+
+    @pytest.mark.parametrize("error_if", ["match", "no_match"])
+    def test_valid_error_if_values(self, error_if: str):
+        alert = make_alert(error_if=error_if)
+        assert alert.error_if == error_if
+
+    def test_invalid_error_if_raises(self):
+        with pytest.raises(ValueError, match="invalid error_if value"):
+            make_alert(error_if="bad_value")
+
+    @pytest.mark.parametrize("lookback_hours", [0, -1, -100])
+    def test_nonpositive_lookback_hours_raises(self, lookback_hours: int):
+        with pytest.raises(
+            ValueError, match="lookback_hours must be a positive integer"
+        ):
+            make_alert(lookback_hours=lookback_hours)
+
+    def test_empty_aws_sns_topic_raises(self):
+        with pytest.raises(
+            ValueError, match="aws_sns_topic must be a non-empty string"
+        ):
+            make_alert(aws_sns_topic="")
+
+
+# ---------------------------------------------------------------------------
+# Test load_config()
+# ---------------------------------------------------------------------------
+
+
+class TestRequiredFields:
+    def test_returns_required_fields(self):
+        @dataclasses.dataclass
+        class TestClass:
+            required: str
+            optional: str | None = None
+
+        assert required_fields(TestClass) == ["required"]
+
+
+# ---------------------------------------------------------------------------
+# Test load_config()
+# ---------------------------------------------------------------------------
+
+
+class TestLoadConfig:
+    def test_returns_alert_objects(self, single_alert_config: Path):
+        alerts = load_config(single_alert_config)
+
+        assert len(alerts) == 1
+        for field in required_fields(Alert):
+            assert getattr(alerts[0], field) == getattr(SINGLE_ALERT, field)
+
+    def test_sets_source_file(self, single_alert_config: Path):
+        alerts = load_config(single_alert_config)
+
+        assert alerts[0].source_file == str(single_alert_config)
+
+    def test_returns_multiple_alerts(self, multi_alert_config: Path):
+        alerts = load_config(multi_alert_config)
+
+        for field in required_fields(Alert):
+            assert getattr(alerts[0], field) == getattr(MULTI_ALERT_A, field)
+            assert getattr(alerts[1], field) == getattr(MULTI_ALERT_B, field)
+
+    def test_all_alerts_get_source_file(self, multi_alert_config: Path):
+        alerts = load_config(multi_alert_config)
+
+        for alert in alerts:
+            assert alert.source_file == str(multi_alert_config)
+
+    def test_raises_when_no_alerts_key(self, tmp_path: Path):
+        config_file = tmp_path / "empty.yml"
+        config_file.write_text(yaml.dump({}))
+
+        with pytest.raises(ValueError, match="No top-level"):
+            load_config(config_file)
+
+    def test_raises_on_missing_required_field(self, tmp_path: Path):
+        # We can't parameterize this test because it requires extracting
+        # required fields from the Alert dataclass at runtime
+        required_alert_fields = required_fields(Alert)
+        for missing_field in required_alert_fields:
+            raw_dict = {
+                k: v
+                for k, v in dataclasses.asdict(SINGLE_ALERT).items()
+                if k != missing_field
+            }
+            config_file = write_raw_config(tmp_path / "svc.yml", [raw_dict])
+
+            with pytest.raises(ValueError, match=missing_field):
+                load_config(config_file)
+
+    def test_error_message_includes_file_path(self, tmp_path: Path):
+        raw_dict = {
+            k: v
+            for k, v in dataclasses.asdict(SINGLE_ALERT).items()
+            if k != "lookback_hours"
+        }
+        config_file = write_raw_config(tmp_path / "svc.yml", [raw_dict])
+
+        with pytest.raises(ValueError, match=str(config_file)):
+            load_config(config_file)
+
+
+# ---------------------------------------------------------------------------
+# Test is_due()
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "schedule,now,expected",
+    [
+        # Due: prev fire within the past hour
+        (
+            "0 12 * * *",
+            datetime(2026, 6, 16, 12, 30, tzinfo=UTC),
+            True,
+        ),  # 30 min ago
+        (
+            "0 12 * * *",
+            datetime(2026, 6, 16, 12, 59, tzinfo=UTC),
+            True,
+        ),  # 59 min ago
+        (
+            "0 * * * *",
+            datetime(2026, 6, 16, 12, 45, tzinfo=UTC),
+            True,
+        ),  # hourly, 45 min ago
+        (
+            "0 */2 * * *",
+            datetime(2026, 6, 16, 12, 30, tzinfo=UTC),
+            True,
+        ),  # every 2h, 30 min ago
+        # Not due: prev fire more than an hour ago
+        (
+            "0 12 * * *",
+            datetime(2026, 6, 16, 13, 30, tzinfo=UTC),
+            False,
+        ),  # 90 min ago
+        (
+            "0 12 1 * *",
+            datetime(2026, 6, 16, 12, 30, tzinfo=UTC),
+            False,
+        ),  # monthly, 15 days ago
+        (
+            "0 */2 * * *",
+            datetime(2026, 6, 16, 13, 30, tzinfo=UTC),
+            False,
+        ),  # every 2h, 90 min ago
+    ],
+)
+def test_is_due(schedule: str, now: datetime, expected: bool):
+    assert is_due(schedule, now) is expected
+
+
+# ---------------------------------------------------------------------------
+# Test find_due_alerts()
+# ---------------------------------------------------------------------------
+
+# Schedule fires at 12:00 UTC daily; _FIND_NOW is 12:30 → alert is due.
+_FIND_NOW = datetime(2026, 6, 16, 12, 30, tzinfo=UTC)
+
+
+class TestFindDueAlerts:
+    def test_returns_only_due_alerts(self, find_due_config: Path):
+        due = find_due_alerts([find_due_config], _FIND_NOW)
+        assert len(due) == 1
+        assert due[0].name == "Due alert"
+
+    def test_returns_empty_when_none_due(self, find_due_config: Path):
+        now = datetime(2026, 6, 16, 15, 0, tzinfo=UTC)
+        due = find_due_alerts([find_due_config], now)
+        assert due == []
+
+    def test_aggregates_across_multiple_config_files(
+        self, tmp_path: Path, find_due_config: Path
+    ):
+        second_config = {
+            "alerts": [
+                {
+                    "name": "Another due alert",
+                    "log_group": "/h",
+                    "log_query": "error",
+                    "error_if": "match",
+                    "schedule": "0 12 * * *",
+                    "lookback_hours": 6,
+                }
+            ]
+        }
+        second_file = tmp_path / "other.yml"
+        second_file.write_text(yaml.dump(second_config))
+
+        due = find_due_alerts([find_due_config, second_file], _FIND_NOW)
+
+        assert len(due) == 2
+        assert {a.name for a in due} == {"Due alert", "Another due alert"}
+
+
+# ---------------------------------------------------------------------------
+# Test load_results()
+# ---------------------------------------------------------------------------
+
+
+class TestLoadResults:
+    def test_raises_on_missing_required_result_container_fields(self):
+        for missing_field in required_fields(ResultContainer):
+            container_dict = {
+                k: v
+                for k, v in {"any_failed": False, "results": []}.items()
+                if k != missing_field
+            }
+            with pytest.raises(
+                ValueError,
+                match="ResultContainer object missing required fields",
+            ):
+                load_results(container_dict)
+
+    def test_raises_on_missing_required_result_fields(self):
+        valid_result = {
+            "name": "Test alert",
+            "passed": True,
+            "message": "PASS [Test alert]",
+            "aws_sns_topic": None,
+        }
+        for missing_field in required_fields(Result):
+            result_dict = {
+                k: v for k, v in valid_result.items() if k != missing_field
+            }
+            container_dict = {"any_failed": False, "results": [result_dict]}
+            with pytest.raises(ValueError, match="missing required fields"):
+                load_results(container_dict)
+
+    def test_loads_results_from_container_dict(self):
+        container_dict = {
+            "any_failed": True,
+            "results": [
+                {
+                    "name": "Alert A",
+                    "passed": False,
+                    "message": "FAIL [Alert A]: ...",
+                    "aws_sns_topic": "my-topic",
+                },
+                {
+                    "name": "Alert B",
+                    "passed": True,
+                    "message": "PASS [Alert B]",
+                    "aws_sns_topic": None,
+                },
+            ],
+        }
+        results = load_results(container_dict)
+
+        assert len(results) == 2
+        assert all(isinstance(r, Result) for r in results)
+        assert results[0].name == "Alert A"
+        assert results[0].passed is False
+        assert results[0].aws_sns_topic == "my-topic"
+        assert results[1].name == "Alert B"
+        assert results[1].passed is True
+        assert results[1].aws_sns_topic is None

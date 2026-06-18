@@ -21,16 +21,19 @@ dev = [
     "ruff>=0.15",
 ]
 
+[tool.setuptools.packages.find]
+include = ["alerts*"]
+
 [tool.pytest.ini_options]
 # Make sure pytest knows where our modules and our tests live
-pythonpath = ["scripts"]
+pythonpath = ["."]
 testpaths = ["tests"]
 # Print verbose output
 addopts = "-v"
 
 [tool.ty.environment]
 # Make sure ty knows where our modules live
-extra-paths = ["scripts"]
+extra-paths = ["."]
 
 [tool.ruff]
 line-length = 79
