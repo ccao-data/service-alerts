@@ -21,3 +21,12 @@ repos:
     hooks:
       - id: ty
         args: [--frozen, --all-extras]
+
+  - repo: local
+    hooks:
+      - id: validate-alert-configs
+        name: Validate alert config files
+        entry: uv run python -m alerts.validate
+        language: system
+        files: ^config/.*\.yml$
+        pass_filenames: true

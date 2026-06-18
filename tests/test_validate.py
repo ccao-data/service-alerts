@@ -1,0 +1,139 @@
+"""Unit tests for alerts/validate.py."""
+
+from pathlib import Path
+
+import pytest
+import yaml
+
+from alerts.validate import validate_configs
+from tests.conftest import (
+    SINGLE_ALERT,
+    make_alert,
+    write_config,
+    write_raw_config,
+)
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+
+def write_invalid_yaml(path: Path) -> Path:
+    """Write a syntactically invalid YAML file."""
+    path.write_text(":\n  bad: [unclosed\n")
+    return path
+
+
+# ---------------------------------------------------------------------------
+# Tests
+# ---------------------------------------------------------------------------
+
+
+def test_valid_config_passes(tmp_path: Path, capsys: pytest.CaptureFixture):
+    config = write_config(tmp_path / "svc.yml", [SINGLE_ALERT])
+    exit_code = validate_configs([config])
+    assert exit_code == 0
+    assert "OK" in capsys.readouterr().out
+
+
+def test_valid_config_prints_alert_count(
+    tmp_path: Path, capsys: pytest.CaptureFixture
+):
+    alerts = [
+        make_alert(name="Alert A"),
+        make_alert(name="Alert B"),
+    ]
+    config = write_config(tmp_path / "svc.yml", alerts)
+    validate_configs([config])
+    assert "2 alert(s)" in capsys.readouterr().out
+
+
+def test_missing_required_field_fails(
+    tmp_path: Path, capsys: pytest.CaptureFixture
+):
+    raw = {
+        k: v
+        for k, v in {
+            "name": "Test alert",
+            "log_group": "/g",
+            "log_query": "info",
+            "error_if": "no_match",
+            "schedule": "0 12 * * *",
+            # lookback_hours intentionally omitted
+        }.items()
+    }
+    config = write_raw_config(tmp_path / "svc.yml", [raw])
+    exit_code = validate_configs([config])
+    assert exit_code == 1
+    assert "FAIL" in capsys.readouterr().out
+
+
+def test_invalid_field_value_fails(
+    tmp_path: Path, capsys: pytest.CaptureFixture
+):
+    raw = {
+        "name": "Test alert",
+        "log_group": "/g",
+        "log_query": "info",
+        "error_if": "bad_value",
+        "schedule": "0 12 * * *",
+        "lookback_hours": 1,
+    }
+    config = write_raw_config(tmp_path / "svc.yml", [raw])
+    exit_code = validate_configs([config])
+    assert exit_code == 1
+
+
+def test_empty_alerts_key_fails(tmp_path: Path):
+    config_file = tmp_path / "empty.yml"
+    config_file.write_text(yaml.dump({}))
+    assert validate_configs([config_file]) == 1
+
+
+def test_invalid_yaml_syntax_fails(
+    tmp_path: Path, capsys: pytest.CaptureFixture
+):
+    config = write_invalid_yaml(tmp_path / "bad.yml")
+    exit_code = validate_configs([config])
+    assert exit_code == 1
+    assert "FAIL" in capsys.readouterr().out
+
+
+def test_multiple_valid_configs_all_pass(tmp_path: Path):
+    config_a = write_config(tmp_path / "a.yml", [make_alert(name="Alert A")])
+    config_b = write_config(tmp_path / "b.yml", [make_alert(name="Alert B")])
+    assert validate_configs([config_a, config_b]) == 0
+
+
+def test_one_failing_config_returns_1(
+    tmp_path: Path, capsys: pytest.CaptureFixture
+):
+    valid = write_config(tmp_path / "valid.yml", [SINGLE_ALERT])
+    invalid = write_raw_config(
+        tmp_path / "invalid.yml", [{"name": "incomplete"}]
+    )
+    exit_code = validate_configs([valid, invalid])
+    assert exit_code == 1
+
+
+def test_all_files_checked_despite_failure(
+    tmp_path: Path, capsys: pytest.CaptureFixture
+):
+    valid = write_config(tmp_path / "valid.yml", [SINGLE_ALERT])
+    invalid = write_raw_config(
+        tmp_path / "invalid.yml", [{"name": "incomplete"}]
+    )
+    validate_configs([invalid, valid])
+    out = capsys.readouterr().out
+    assert "OK" in out
+    assert "FAIL" in out
+
+
+def test_failure_summary_printed(
+    tmp_path: Path, capsys: pytest.CaptureFixture
+):
+    invalid = write_raw_config(
+        tmp_path / "invalid.yml", [{"name": "incomplete"}]
+    )
+    validate_configs([invalid])
+    assert "failed validation" in capsys.readouterr().out
