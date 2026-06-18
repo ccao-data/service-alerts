@@ -24,14 +24,13 @@ import sys
 import boto3
 from botocore.exceptions import BotoCoreError, ClientError
 
+from alerts.constants import AWS_REGION
 from alerts.models import Result, load_results
-
-SNS_REGION = "us-east-1"
 
 
 def build_topic_arn(account_id: str, topic_name: str) -> str:
     """Construct an SNS topic ARN from account ID and topic name."""
-    return f"arn:aws:sns:{SNS_REGION}:{account_id}:{topic_name}"
+    return f"arn:aws:sns:{AWS_REGION}:{account_id}:{topic_name}"
 
 
 def publish_notification(
@@ -116,7 +115,7 @@ def main() -> int:
             )
 
     results = load_results(results_dict)
-    client = boto3.client("sns", region_name=SNS_REGION)
+    client = boto3.client("sns", region_name=AWS_REGION)
     return notify_alerts(results, args.account_id, client)
 
 

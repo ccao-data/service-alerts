@@ -2,8 +2,24 @@ name: check-alerts
 
 on:
   schedule:
-    - cron: "0 * * * *"  # Run at the top of every hour
+    # Run every 3 hours (midnight, 3am, 6am, 9am, noon, 3pm, 6pm, 9pm UTC).
+    # This window is deliberately wide because we have observed scheduled
+    # workflows running up to 2 hours later than their scheduled time.
+    # See README.md for details.
+    #
+    # This window must match the `CHECK_WINDOW_HOURS` and
+    # `ALLOWED_SCHEDULE_HOURS`constants defined in the app code. If you update
+    # this schedule, make sure to update those constants as well.
+    - cron: "0 */3 * * *"
   workflow_dispatch:  # Allow manual runs for testing
+
+# Configure a concurrency group so that only one instance of this workflow
+# can run at a given time. If multiple instances want to run at the same time,
+# _don't_ cancel the current run so as to allow it to complete the check and
+# notification process
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
 
 env:
   PYTHONUNBUFFERED: "1"
@@ -26,13 +42,21 @@ jobs:
           enable-cache: true
           python-version: "3.14"
 
+      - name: List config files
+        id: list-configs
+        shell: bash
+        run: |
+          shopt -s nullglob
+          config_files=(config/*.yml config/*.yaml)
+          echo "config_files=${config_files[*]}" >> "$GITHUB_OUTPUT"
+
       - name: Find due alerts
         id: find-due
         shell: bash
         run: |
           # `|| exit $?` here catches any errors in the script call and raises
           # them, since otherwise the command substitution will suppress errors
-          due=$(uv run python -m alerts.check config/*.yml --dry-run) || exit $?
+          due=$(uv run python -m alerts.check ${{ steps.list-configs.outputs.config_files }} --dry-run) || exit $?
           if [[ -n "$due" ]]; then
             echo "Alerts due:"
             echo "$due"
@@ -60,7 +84,7 @@ jobs:
         id: run-checks
         shell: bash
         run: |
-          results=$(uv run python -m alerts.check config/*.yml --format json) || exit $?
+          results=$(uv run python -m alerts.check ${{ steps.list-configs.outputs.config_files }} --format json) || exit $?
           echo "Results:"
           echo "$results"
           echo "results=$results" >> "$GITHUB_OUTPUT"

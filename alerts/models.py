@@ -8,6 +8,8 @@ from typing import Literal, Protocol, Type
 import yaml
 from croniter import croniter
 
+from alerts.constants import ALLOWED_SCHEDULE_HOURS, CHECK_WINDOW_HOURS
+
 
 class DataclassType(Protocol):
     """Custom type to help us annotate functions that accept a class that is
@@ -55,12 +57,6 @@ class Alert:
             raise ValueError(
                 f"Alert '{self.name}': name must be < 100 characters"
             )
-        valid_error_if = frozenset({"match", "no_match"})
-        if self.error_if not in valid_error_if:
-            raise ValueError(
-                f"Alert '{self.name}': invalid error_if value '{self.error_if}'. "
-                f"Must be one of: {sorted(valid_error_if)}"
-            )
         if self.lookback_hours <= 0:
             raise ValueError(
                 f"Alert '{self.name}': lookback_hours must be a positive integer, "
@@ -71,6 +67,53 @@ class Alert:
                 f"Alert '{self.name}': aws_sns_topic must be a non-empty string "
                 f"if set, got {self.aws_sns_topic!r}"
             )
+
+        valid_error_if = frozenset({"match", "no_match"})
+        if self.error_if not in valid_error_if:
+            raise ValueError(
+                f"Alert '{self.name}': invalid error_if value '{self.error_if}'. "
+                f"Must be one of: {sorted(valid_error_if)}"
+            )
+
+        valid_schedule, reason = validate_schedule(self.schedule)
+        if not valid_schedule:
+            raise ValueError(f"Alert '{self.name}': {reason}")
+
+
+def validate_schedule(schedule) -> tuple[bool, str]:
+    """Validate that a cron expression representing an Alert schedule only fires
+    at permitted times.
+
+    If a schedule is valid, returns a tuple with two elements: True, and an
+    empty string. If a schedule is invalid, returns a tuple containing False,
+    and a string representing the reason why the schedule is invalid."""
+    parts = schedule.split()
+    if len(parts) != 5:
+        return False, (
+            f"Schedule must be a 5-field cron expression, "
+            f"got {len(parts)} fields"
+        )
+
+    try:
+        expanded, _ = croniter.expand(schedule)
+    except Exception as exc:
+        return False, f"Invalid cron expression: {exc}"
+
+    minute_values = set(expanded[0])
+    hour_values = set(expanded[1])
+    if minute_values != {0}:
+        return False, (
+            f"Schedule must only fire at the top of the "
+            f"hour (minute field must be 0), got minutes: {sorted(minute_values)}"
+        )
+    if not hour_values.issubset(ALLOWED_SCHEDULE_HOURS):
+        invalid_hours = sorted(hour_values - ALLOWED_SCHEDULE_HOURS)
+        return False, (
+            f"Schedule fires at disallowed hours: {invalid_hours}."
+            f"Must only fire at: {sorted(ALLOWED_SCHEDULE_HOURS)}"
+        )
+
+    return True, ""
 
 
 def required_fields(dataclass: Type[DataclassType]) -> list[str]:
@@ -124,11 +167,11 @@ def load_config(path: Path) -> list[Alert]:
 
 
 def is_due(schedule: str, now: datetime) -> bool:
-    """Return True if the cron schedule fired within the past hour."""
+    """Return True if the cron schedule fired within the past CHECK_WINDOW_HOURS."""
     cron = croniter(schedule, now)
     prev_fire = cron.get_prev(datetime)
     elapsed_seconds = (now - prev_fire).total_seconds()
-    return elapsed_seconds < 3600
+    return elapsed_seconds < CHECK_WINDOW_HOURS * 3600
 
 
 def find_due_alerts(config_files: list[Path], now: datetime) -> list[Alert]:

@@ -57,7 +57,7 @@ MULTI_ALERT_A = make_alert(
     log_group="/g",
     log_query="x",
     error_if="match",
-    schedule="0 * * * *",
+    schedule="0 0 * * *",
     lookback_hours=1,
 )
 MULTI_ALERT_B = make_alert(
@@ -65,7 +65,7 @@ MULTI_ALERT_B = make_alert(
     log_group="/g",
     log_query="y",
     error_if="no_match",
-    schedule="0 * * * *",
+    schedule="0 0 * * *",
     lookback_hours=1,
 )
 

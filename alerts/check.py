@@ -27,6 +27,7 @@ from typing import Literal
 
 import boto3
 
+from alerts.constants import AWS_REGION
 from alerts.models import Alert, find_due_alerts
 
 
@@ -116,7 +117,7 @@ def check_alerts(
             print(f"No alerts due at {now.strftime('%Y-%m-%d %H:%M UTC')}.")
         return 0
 
-    client = boto3.client("logs")
+    client = boto3.client("logs", region_name=AWS_REGION)
 
     if output_format == "text":
         print(

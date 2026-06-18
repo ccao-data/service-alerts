@@ -16,6 +16,7 @@ from alerts.models import (
     load_config,
     load_results,
     required_fields,
+    validate_schedule,
 )
 from tests.conftest import (
     MULTI_ALERT_A,
@@ -63,6 +64,66 @@ class TestAlert:
             ValueError, match="aws_sns_topic must be a non-empty string"
         ):
             make_alert(aws_sns_topic="")
+
+    def test_invalid_schedule_raises(self):
+        with pytest.raises(
+            ValueError, match="must be a 5-field cron expression"
+        ):
+            make_alert(schedule="0 * * *")
+
+
+# ---------------------------------------------------------------------------
+# Test validate_schedule()
+# ---------------------------------------------------------------------------
+
+
+class TestValidateSchedule:
+    @pytest.mark.parametrize(
+        "schedule",
+        [
+            "0 0 * * *",  # midnight daily
+            "0 12 * * *",  # noon daily
+            "0 */3 * * *",  # every 3h
+            "0 0,12 * * *",  # twice daily at aligned hours
+            "0 12 1 * *",  # monthly at noon
+            "0 0 * * 1",  # weekly Mondays at midnight
+        ],
+    )
+    def test_valid_schedule_constructs(self, schedule: str):
+        is_valid, message = validate_schedule(schedule)
+        assert is_valid
+        assert message == ""
+
+    @pytest.mark.parametrize(
+        "schedule",
+        [
+            "0 0 * *",  # Missing fifth operator
+            "99 99 99 99 99",  # Invalid field values
+        ],
+    )
+    def test_invalid_cron_expressions_raise(self, schedule: str):
+        is_valid, reason = validate_schedule(schedule)
+        assert not is_valid
+        assert "cron expression" in reason
+
+    def test_nonzero_minute_raises(self):
+        is_valid, reason = validate_schedule("30 12 * * *")
+        assert not is_valid
+        assert "top of the hour" in reason
+
+    @pytest.mark.parametrize(
+        "schedule",
+        [
+            "0 * * * *",  # every hour (includes non-aligned hours)
+            "0 1 * * *",  # 1am
+            "0 */2 * * *",  # every 2h (includes 2, 4, 8, ...)
+            "0 1,12 * * *",  # 1am and noon
+        ],
+    )
+    def test_disallowed_hours_raises(self, schedule: str):
+        is_valid, reason = validate_schedule(schedule)
+        assert not is_valid
+        assert "disallowed hours" in reason
 
 
 # ---------------------------------------------------------------------------
@@ -153,7 +214,7 @@ class TestLoadConfig:
 @pytest.mark.parametrize(
     "schedule,now,expected",
     [
-        # Due: prev fire within the past hour
+        # Due: prev fire within the past 3 hours
         (
             "0 12 * * *",
             datetime(2026, 6, 16, 12, 30, tzinfo=UTC),
@@ -165,31 +226,36 @@ class TestLoadConfig:
             True,
         ),  # 59 min ago
         (
-            "0 * * * *",
+            "0 */3 * * *",
             datetime(2026, 6, 16, 12, 45, tzinfo=UTC),
             True,
-        ),  # hourly, 45 min ago
-        (
-            "0 */2 * * *",
-            datetime(2026, 6, 16, 12, 30, tzinfo=UTC),
-            True,
-        ),  # every 2h, 30 min ago
-        # Not due: prev fire more than an hour ago
+        ),  # 45 min ago (last fire at 12:00)
         (
             "0 12 * * *",
-            datetime(2026, 6, 16, 13, 30, tzinfo=UTC),
+            datetime(2026, 6, 16, 14, 30, tzinfo=UTC),
+            True,
+        ),  # 2h30m ago — within 3h window
+        # Not due: prev fire 3 hours or more ago
+        (
+            "0 12 * * *",
+            datetime(2026, 6, 16, 15, 30, tzinfo=UTC),
             False,
-        ),  # 90 min ago
+        ),  # 3h30m ago
+        (
+            "0 12 * * *",
+            datetime(2026, 6, 16, 15, 0, tzinfo=UTC),
+            False,
+        ),  # exactly 3h ago — strict < means boundary is not due
         (
             "0 12 1 * *",
             datetime(2026, 6, 16, 12, 30, tzinfo=UTC),
             False,
         ),  # monthly, 15 days ago
         (
-            "0 */2 * * *",
-            datetime(2026, 6, 16, 13, 30, tzinfo=UTC),
+            "0 0 * * *",
+            datetime(2026, 6, 16, 12, 30, tzinfo=UTC),
             False,
-        ),  # every 2h, 90 min ago
+        ),  # midnight daily, 12.5h ago
     ],
 )
 def test_is_due(schedule: str, now: datetime, expected: bool):

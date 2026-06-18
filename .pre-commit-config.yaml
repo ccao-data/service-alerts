@@ -28,5 +28,5 @@ repos:
         name: Validate alert config files
         entry: uv run python -m alerts.validate
         language: system
-        files: ^config/.*\.yml$
+        files: ^config/.*\.ya?ml$
         pass_filenames: true
