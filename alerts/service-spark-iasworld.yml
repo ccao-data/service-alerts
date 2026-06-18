@@ -8,7 +8,7 @@ alerts:
 
   - name: "Spark ingest error"
     log_group: /ccao/jobs/spark
-    log_query: "?error  ?Error ?ERROR ?exception ?Exception ?EXCEPTION"
+    log_query: "?error ?Error ?ERROR ?exception ?Exception ?EXCEPTION"
     error_if: "match"
     schedule: "0 12 * * *"
     lookback_hours: 12
