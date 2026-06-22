@@ -55,6 +55,7 @@ class TestValidateConfigs:
         raw = {
             k: v
             for k, v in {
+                "id": "test-alert",
                 "name": "Test alert",
                 "log_group": "/g",
                 "log_query": "info",
@@ -72,6 +73,7 @@ class TestValidateConfigs:
         self, tmp_path: Path, capsys: pytest.CaptureFixture
     ):
         raw = {
+            "id": "test-alert",
             "name": "Test alert",
             "log_group": "/g",
             "log_query": "info",

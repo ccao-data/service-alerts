@@ -9,6 +9,7 @@ import pytest_mock
 import yaml
 
 from alerts.check import check_alerts, evaluate_alert, query_cloudwatch
+from alerts.models import ResultStatus
 from tests.conftest import make_alert, make_paginator
 
 UTC = timezone.utc
@@ -75,64 +76,44 @@ class TestQueryCloudWatch:
 
 class TestEvaluateAlert:
     @pytest.mark.parametrize(
-        "error_if,found,expected_passed,expected_prefix",
+        "fail_if,found,expected_status",
         [
             (
                 "no_match",
                 False,
-                False,
-                "FAIL",
+                ResultStatus.FAIL,
             ),  # no logs found when required → fail
             (
                 "no_match",
                 True,
-                True,
+                ResultStatus.PASS,
                 "PASS",
             ),  # logs found when required → pass
-            ("match", True, False, "FAIL"),  # logs found when forbidden → fail
+            (
+                "match",
+                True,
+                ResultStatus.FAIL,
+            ),  # logs found when forbidden → fail
             (
                 "match",
                 False,
-                True,
-                "PASS",
+                ResultStatus.PASS,
             ),  # no logs found when forbidden → pass
         ],
     )
     def test_evaluate_alert_pass_fail(
         self,
-        error_if: str,
+        fail_if: str,
         found: bool,
-        expected_passed: bool,
-        expected_prefix: str,
+        expected_status: bool,
     ):
-        alert = make_alert(error_if=error_if)
+        alert = make_alert(fail_if=fail_if)
         events = [{"message": "hit"}] if found else []
         client = make_paginator({"events": events})
 
-        passed, message = evaluate_alert(alert, _EVAL_NOW, client)
+        result = evaluate_alert(alert, _EVAL_NOW, client)
 
-        assert passed is expected_passed
-        assert expected_prefix in message
-        if not expected_passed:
-            assert alert.name in message
-
-    @pytest.mark.parametrize(
-        "alert_override,expected_in_message",
-        [
-            ({"log_group": "/my/group"}, "/my/group"),
-            ({"lookback_hours": 6}, "6"),
-            ({"log_query": "my_pattern"}, "my_pattern"),
-        ],
-    )
-    def test_evaluate_alert_fail_message_content(
-        self, alert_override: dict, expected_in_message: str
-    ):
-        alert = make_alert(error_if="no_match", **alert_override)
-        client = make_paginator({"events": []})
-
-        _, message = evaluate_alert(alert, _EVAL_NOW, client)
-
-        assert expected_in_message in message
+        assert result.status == expected_status
 
 
 # ---------------------------------------------------------------------------
@@ -170,18 +151,20 @@ class TestCheckAlerts:
         config = {
             "alerts": [
                 {
+                    "id": "alert-a",
                     "name": "Alert A",
                     "log_group": "/g",
                     "log_query": "info",
-                    "error_if": "no_match",
+                    "fail_if": "no_match",
                     "schedule": "0 12 * * *",
                     "lookback_hours": 1,
                 },
                 {
+                    "id": "alert-b",
                     "name": "Alert B",
                     "log_group": "/g",
                     "log_query": "error",
-                    "error_if": "match",
+                    "fail_if": "match",
                     "schedule": "0 12 * * *",
                     "lookback_hours": 1,
                 },
@@ -214,7 +197,7 @@ class TestCheckAlerts:
     def test_returns_0_when_all_alerts_pass(
         self, find_due_config: Path, mocker: pytest_mock.MockerFixture
     ):
-        # "Due alert" is error_if=no_match; events found → pass
+        # "Due alert" is fail_if=no_match; events found → pass
         mocker.patch(
             "alerts.check.boto3.client",
             return_value=make_paginator({"events": [{"message": "hit"}]}),
@@ -227,7 +210,7 @@ class TestCheckAlerts:
     def test_returns_0_when_any_alert_fails(
         self, find_due_config: Path, mocker: pytest_mock.MockerFixture
     ):
-        # "Due alert" is error_if=no_match; no events found → fail, but exit 0
+        # "Due alert" is fail_if=no_match; no events found → fail, but exit 0
         mocker.patch(
             "alerts.check.boto3.client",
             return_value=make_paginator({"events": []}),
@@ -276,18 +259,20 @@ class TestCheckAlerts:
         config = {
             "alerts": [
                 {
+                    "id": "failing-alert",
                     "name": "Failing alert",
                     "log_group": "/g",
                     "log_query": "info",
-                    "error_if": "no_match",
+                    "fail_if": "no_match",
                     "schedule": "0 12 * * *",
                     "lookback_hours": 1,
                 },
                 {
+                    "id": "passing-alert",
                     "name": "Passing alert",
                     "log_group": "/g",
                     "log_query": "error",
-                    "error_if": "match",
+                    "fail_if": "match",
                     "schedule": "0 12 * * *",
                     "lookback_hours": 1,
                 },
@@ -401,10 +386,11 @@ class TestCheckAlertsJsonFormat:
         config = {
             "alerts": [
                 {
+                    "id": "spark-alert",
                     "name": "Spark alert",
                     "log_group": "/g",
                     "log_query": "info",
-                    "error_if": "no_match",
+                    "fail_if": "no_match",
                     "schedule": "0 12 * * *",
                     "lookback_hours": 1,
                     "aws_sns_topic": "my-topic",

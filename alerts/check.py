@@ -6,7 +6,7 @@ Usage:
 
 For each alert in each config file, checks whether the alert's cron schedule
 fired within the past hour. If so, queries CloudWatch Logs and evaluates the
-result against the alert's `error_if` condition. All alerts are checked before
+result against the alert's `fail_if` condition. All alerts are checked before
 the script exits.
 
 Exit codes:
@@ -28,7 +28,13 @@ from typing import Literal
 import boto3
 
 from alerts.constants import AWS_REGION
-from alerts.models import Alert, find_due_alerts
+from alerts.models import (
+    Alert,
+    Result,
+    ResultContainer,
+    ResultStatus,
+    find_due_alerts,
+)
 
 
 def query_cloudwatch(
@@ -55,27 +61,20 @@ def query_cloudwatch(
     return False
 
 
-def evaluate_alert(alert: Alert, now: datetime, client) -> tuple[bool, str]:
-    """Evaluate a single alert. Returns (passed, message).
-
-    passed=True means no error condition was triggered.
-    """
+def evaluate_alert(alert: Alert, now: datetime, client) -> Result:
+    """Evaluate a single Alert at a given time `now`, returning a Result object
+    containing the alert status and message."""
     found_match = query_cloudwatch(
         alert.log_group, alert.log_query, alert.lookback_hours, now, client
     )
 
-    if alert.error_if == "no_match" and not found_match:
-        return False, (
-            f"FAIL [{alert.name}]: No logs matching '{alert.log_query}' found in "
-            f"'{alert.log_group}' in the past {alert.lookback_hours}h"
-        )
-    if alert.error_if == "match" and found_match:
-        return False, (
-            f"FAIL [{alert.name}]: Logs matching '{alert.log_query}' found in "
-            f"'{alert.log_group}' in the past {alert.lookback_hours}h"
-        )
+    status = ResultStatus.PASS
+    if alert.fail_if == "no_match" and not found_match:
+        status = ResultStatus.FAIL
+    if alert.fail_if == "match" and found_match:
+        status = ResultStatus.FAIL
 
-    return True, f"PASS [{alert.name}]"
+    return Result(alert=alert, status=status)
 
 
 def check_alerts(
@@ -125,30 +124,23 @@ def check_alerts(
             f"{now.strftime('%Y-%m-%d %H:%M UTC')}..."
         )
 
-    results: list[tuple[bool, str, Alert]] = []
+    results: list[Result] = []
     for alert in due_alerts:
-        passed, message = evaluate_alert(alert, now, client)
-        results.append((passed, message, alert))
+        result = evaluate_alert(alert, now, client)
+        results.append(result)
         if output_format == "text":
-            print(message)
+            print(result.get_message())
 
-    failures = [msg for passed, msg, _ in results if not passed]
+    failures = [
+        result for result in results if not result.status == ResultStatus.PASS
+    ]
 
     if output_format == "json":
         print(
             json.dumps(
-                {
-                    "any_failed": bool(failures),
-                    "results": [
-                        {
-                            "name": alert.name,
-                            "passed": passed,
-                            "message": message,
-                            "aws_sns_topic": alert.aws_sns_topic,
-                        }
-                        for passed, message, alert in results
-                    ],
-                }
+                ResultContainer(
+                    any_failed=bool(failures), results=results
+                ).asdict()
             )
         )
     else:

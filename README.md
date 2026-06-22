@@ -27,10 +27,12 @@ alert notifications via email.
 The code and the docs in this repo all use the term "alert" to refer to a check
 that runs on a schedule in order to search for irregularities in CloudWatch logs
 during specific windows of time. One "alert" typically corresponds to one type
-of irregularity in one particular service. We say that an alert "fails" if there
-are irregularities in its logs during the time window, and it "passes" otherwise.
-Each alert has a specific schedule on which it must run, and if at a given point
-in time an alert should run but has not yet run, then we say it is "due".
+of irregularity in one particular service. When we evaluate an alert at a
+specific moment in time, we say that we "check" the alert. We say that an alert
+"fails" if there are irregularities in its logs during the time window, and it
+"passes" otherwise. Each alert has a specific schedule on which it must run, and
+if at a given point in time an alert should run but has not yet run, then we say
+it is "due".
 
 ## How it works
 
@@ -42,7 +44,7 @@ in time an alert should run but has not yet run, then we say it is "due".
    within the past 3 hours using [croniter](https://github.com/kiorky/croniter).
 4. If the alert is due, it queries the specified CloudWatch log group for
    events matching `log_query` within the `lookback_hours` window.
-5. The result is evaluated against `error_if`, a config value that determines
+5. The result is evaluated against `fail_if`, a config value that determines
    the failure condition of the alert. All alerts run before the script exits,
    so that a single failure doesn't short-circuit the rest.
 6. The workflow fails if any alert fails, surfacing the issue in GitHub.
@@ -89,32 +91,36 @@ and one that confirms the ingest job ran without encountering an error.
 
 ```yaml
 alerts:
-  - name: "My job not run"       # Required. Unique, human-readable alert name.
+  - id: my-job-not-run           # Required: Unique slug, acts as the alert identifier.
+    name: "My job not run"       # Required. Unique, human-readable alert name.
     log_group: /ccao/jobs/my-job # Required. CloudWatch log group to search.
     log_query: "info"            # Required. String to search for in log events.
-    error_if: "no_match"         # Required. "no_match" or "match" (see below).
+    fail_if: "no_match"          # Required. "no_match" or "match" (see below).
     schedule: "0 12 * * 1-5"     # Required. Cron expression for when to check.
     lookback_hours: 12           # Required. How far back to search for logs.
     aws_sns_topic: topic-name    # Optional. Name of the AWS SNS topic to notify on failure.
+    failure_message: Job failed  # Optional. Custom error message to show in notifications.
 ```
 
 ### Alert config field reference
 
-| Field            | Type                      | Description                                                                                                                                                                               |
-|------------------|---------------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `name`           | string                    | Unique human-readable name shown in workflow output and failure messages.                                                                                                                 |
-| `log_group`      | string                    | Name of the CloudWatch log group to search.                                                                                                                                               |
-| `log_query`      | string                    | Filter pattern passed to [`filter_log_events`](https://docs.aws.amazon.com/AmazonCloudWatchLogs/latest/APIReference/API_FilterLogEvents.html). Supports CloudWatch filter pattern syntax. |
-| `error_if`       | `"no_match"` \| `"match"` | `"no_match"`: fail if **no** events match (use to detect a job that hasn't run). `"match"`: fail if **any** events match (use to detect errors).                                          |
-| `schedule`       | string                    | Cron expression (5-field, UTC) for when the alert should be evaluated. See [scheduling constraints](#scheduling-constraints) below.                                                       |
-| `lookback_hours` | integer                   | Number of hours back from the check time to search for matching log events.                                                                                                               |
-| `aws_sns_topic`  | string                    | Optional. Name of the AWS SNS topic to notify on failure. This should _not_ be an ARN, since ARNs contain our AWS account ID, which is not public.                                        |
+| Field             | Type                      | Description                                                                                                                                                                               |
+|-------------------|---------------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `id`              | string                    | Unique slug to act as an identifier for the alert. Must be formatted using only alphanumeric characters and hyphens.                                                                      |
+| `name`            | string                    | Unique human-readable name shown in workflow output and failure messages.                                                                                                                 |
+| `log_group`       | string                    | Name of the CloudWatch log group to search.                                                                                                                                               |
+| `log_query`       | string                    | Filter pattern passed to [`filter_log_events`](https://docs.aws.amazon.com/AmazonCloudWatchLogs/latest/APIReference/API_FilterLogEvents.html). Supports CloudWatch filter pattern syntax. |
+| `fail_if`         | `"no_match"` \| `"match"` | `"no_match"`: fail if **no** events match (use to detect a job that hasn't run). `"match"`: fail if **any** events match (use to detect errors).                                          |
+| `schedule`        | string                    | Cron expression (5-field, UTC) for when the alert should be evaluated. See [scheduling constraints](#scheduling-constraints) below.                                                       |
+| `lookback_hours`  | integer                   | Number of hours back from the check time to search for matching log events.                                                                                                               |
+| `aws_sns_topic`   | string                    | Optional. Name of the AWS SNS topic to notify on failure. This should _not_ be an ARN, since ARNs contain our AWS account ID, which is not public.                                        |
+| `failure_message` | string                    | Optional. Custom error message to show in notifications. When absent, the code will construct a simple error message fit for internal use.                                                |
 
-### Choosing `error_if`
+### Choosing `fail_if`
 
-- Use `error_if: "no_match"` to assert a job **ran** — the alert fires if no
+- Use `fail_if: "no_match"` to assert a job **ran** — the alert fires if no
   matching log events are found (i.e. the job did not emit the expected logs).
-- Use `error_if: "match"` to assert a job ran **without errors** — the alert
+- Use `fail_if: "match"` to assert a job ran **without errors** — the alert
   fires if matching log events are found (i.e. errors are present in the logs).
 
 ### Scheduling constraints

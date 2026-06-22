@@ -6,13 +6,14 @@ from unittest.mock import MagicMock
 import pytest
 from botocore.exceptions import ClientError
 
-from alerts.models import Result, ResultContainer
+from alerts.models import Result, ResultContainer, ResultStatus
 from alerts.notify import (
     build_topic_arn,
     main,
     notify_alerts,
     publish_notification,
 )
+from tests.conftest import make_alert
 
 ACCOUNT_ID = "123456789012"
 TOPIC_NAME = "my-topic"
@@ -30,37 +31,38 @@ def make_sns_client() -> MagicMock:
 
 def make_results(
     *,
-    passed: bool = False,
+    status: ResultStatus = ResultStatus.FAIL,
     aws_sns_topic: str | None = TOPIC_NAME,
     name: str = "Test alert",
-    message: str = "FAIL [Test alert]: something went wrong",
+    failure_message: str | None = None,
 ) -> list[Result]:
     """Return a minimal check results list with one result entry."""
+    alert = make_alert(
+        name=name, aws_sns_topic=aws_sns_topic, failure_message=failure_message
+    )
     return [
         Result(
-            name=name,
-            passed=passed,
-            message=message,
-            aws_sns_topic=aws_sns_topic,
+            alert=alert,
+            status=status,
         )
     ]
 
 
 def make_result_container(
     *,
-    passed: bool = False,
+    status: ResultStatus = ResultStatus.FAIL,
     aws_sns_topic: str | None = TOPIC_NAME,
     name: str = "Test alert",
-    message: str = "FAIL [Test alert]: something went wrong",
+    failure_message: str | None = None,
 ) -> ResultContainer:
     """Return a minimal check result container with one result entry."""
     return ResultContainer(
-        any_failed=not passed,
+        any_failed=status != ResultStatus.FAIL,
         results=make_results(
-            passed=passed,
+            status=status,
             aws_sns_topic=aws_sns_topic,
             name=name,
-            message=message,
+            failure_message=failure_message,
         ),
     )
 
@@ -125,32 +127,32 @@ class TestPublishNotification:
 class TestNotifyAlerts:
     def test_returns_0_when_no_failures(self):
         client = make_sns_client()
-        data = make_results(passed=True)
+        data = make_results(status=ResultStatus.PASS)
         assert notify_alerts(data, ACCOUNT_ID, client) == 0
         client.publish.assert_not_called()
 
     def test_returns_0_when_failure_has_no_topic(self):
         client = make_sns_client()
-        data = make_results(passed=False, aws_sns_topic=None)
+        data = make_results(status=ResultStatus.FAIL, aws_sns_topic=None)
         assert notify_alerts(data, ACCOUNT_ID, client) == 0
         client.publish.assert_not_called()
 
     def test_publishes_for_failed_alert_with_topic(self):
         client = make_sns_client()
-        data = make_results(passed=False, aws_sns_topic=TOPIC_NAME)
+        data = make_results(status=ResultStatus.FAIL, aws_sns_topic=TOPIC_NAME)
         notify_alerts(data, ACCOUNT_ID, client)
         client.publish.assert_called_once()
 
     def test_constructs_correct_arn_for_publish(self):
         client = make_sns_client()
-        data = make_results(passed=False, aws_sns_topic=TOPIC_NAME)
+        data = make_results(status=ResultStatus.FAIL, aws_sns_topic=TOPIC_NAME)
         notify_alerts(data, ACCOUNT_ID, client)
         _, kwargs = client.publish.call_args
         assert kwargs["TopicArn"] == TOPIC_ARN
 
     def test_returns_0_on_successful_publish(self):
         client = make_sns_client()
-        data = make_results(passed=False)
+        data = make_results(status=ResultStatus.FAIL)
         assert notify_alerts(data, ACCOUNT_ID, client) == 0
 
     def test_returns_1_on_publish_failure(self):
@@ -159,7 +161,7 @@ class TestNotifyAlerts:
             {"Error": {"Code": "NotFound", "Message": "Topic not found"}},
             "Publish",
         )
-        data = make_results(passed=False)
+        data = make_results(status=ResultStatus.FAIL)
         assert notify_alerts(data, ACCOUNT_ID, client) == 1
 
     def test_continues_publishing_after_one_failure(self):
@@ -171,15 +173,18 @@ class TestNotifyAlerts:
             ),
             None,  # second call succeeds
         ]
-        data = [*make_results(passed=False), *make_results(passed=False)]
+        data = [
+            *make_results(status=ResultStatus.FAIL),
+            *make_results(status=ResultStatus.FAIL),
+        ]
         assert notify_alerts(data, ACCOUNT_ID, client) == 1
         assert client.publish.call_count == 2
 
     def test_skips_passed_alerts(self):
         client = make_sns_client()
         data = [
-            *make_results(passed=True, name="Passing alert"),
-            *make_results(passed=False, name="Failing alert"),
+            *make_results(status=ResultStatus.PASS, name="Passing alert"),
+            *make_results(status=ResultStatus.FAIL, name="Failing alert"),
         ]
         notify_alerts(data, ACCOUNT_ID, client)
         assert client.publish.call_count == 1
@@ -232,16 +237,20 @@ class TestMain:
                 "any_failed": True,
                 "results": [
                     {
-                        "name": "Alert A",
-                        "passed": False,
-                        "message": "FAIL [Alert A]: ...",
-                        "aws_sns_topic": TOPIC_NAME,
+                        "alert": {
+                            "id": "alert-a",
+                            "name": "Alert A",
+                            "aws_sns_topic": TOPIC_NAME,
+                        },
+                        "status": "FAIL",
                     },
                     {
-                        "name": "Alert B",
-                        "passed": False,
-                        "message": "FAIL [Alert B]: ...",
-                        "aws_sns_topic": TOPIC_NAME,
+                        "alert": {
+                            "id": "alert-b",
+                            "name": "Alert B",
+                            "aws_sns_topic": TOPIC_NAME,
+                        },
+                        "status": "FAIL",
                     },
                 ],
             }

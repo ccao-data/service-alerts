@@ -1,9 +1,10 @@
 """Shared data models and config-loading utilities."""
 
 import dataclasses
+import enum
 from datetime import datetime
 from pathlib import Path
-from typing import Literal, Protocol, Type
+from typing import Any, Literal, Protocol, Type
 
 import yaml
 from croniter import croniter
@@ -18,16 +19,30 @@ class DataclassType(Protocol):
     __dataclass_fields__: dict
 
 
+def required_fields(dataclass: Type[DataclassType]) -> list[str]:
+    """Helper function that takes a dataclass and returns a list of strings
+    representing the names of fields that are required to initialize an
+    instance of that dataclass. Useful for validating dataclasses prior to
+    initialization."""
+    return [
+        field.name
+        for field in dataclasses.fields(dataclass)
+        if field.default is dataclasses.MISSING
+        and field.default_factory is dataclasses.MISSING
+    ]
+
+
 @dataclasses.dataclass
 class Alert:
     """Configuration for a single CloudWatch log alert.
 
     Attributes:
+        id: Unique identifier for the alert, formatted as a slug.
         name: Unique human-readable name shown in output and failure messages.
         log_group: CloudWatch log group to search.
         log_query: Filter pattern passed to `filter_log_events`. Supports
             CloudWatch filter pattern syntax.
-        error_if: Condition that triggers a failure. `"no_match"` fails when
+        fail_if: Condition that triggers a failure. `"no_match"` fails when
             no events are found (e.g. job hasn't run); `"match"` fails when
             events are found (e.g. errors were present in logs).
         schedule: 5-field UTC cron expression for when this alert should be
@@ -38,19 +53,32 @@ class Alert:
         aws_sns_topic: Optional SNS topic name to notify when this alert fails.
             The full ARN is constructed at runtime; only the topic name is stored
             here to avoid embedding the AWS account ID in config files.
+        failure_message: Optional message to send for notification failures.
+            When absent, the code will construct a simple default message based
+            on the other configuration values for the Alert.
     """
 
+    id: str
     name: str
     log_group: str
     log_query: str
-    error_if: Literal["match", "no_match"]
+    fail_if: Literal["match", "no_match"]
     schedule: str
     lookback_hours: int
     source_file: str | None = None
     aws_sns_topic: str | None = None
+    failure_message: str | None = None
 
     def __post_init__(self) -> None:
         """Field validation for this dataclass."""
+        # Alert identifiers must be slugs (i.e. alphanumerics with hyphen
+        # separators)
+        for char in self.id:
+            if not (char.isalnum() or char == "-"):
+                raise ValueError(
+                    f"Alert id {self.id} is invalid; must contain only "
+                    "alphanumeric characters or hyphens"
+                )
         # We use alert names in the subject lines of the notification, so
         # prevent them from being too long
         if len(self.name) > 100:
@@ -68,16 +96,20 @@ class Alert:
                 f"if set, got {self.aws_sns_topic!r}"
             )
 
-        valid_error_if = frozenset({"match", "no_match"})
-        if self.error_if not in valid_error_if:
+        valid_fail_if = frozenset({"match", "no_match"})
+        if self.fail_if not in valid_fail_if:
             raise ValueError(
-                f"Alert '{self.name}': invalid error_if value '{self.error_if}'. "
-                f"Must be one of: {sorted(valid_error_if)}"
+                f"Alert '{self.name}': invalid fail_if value '{self.fail_if}'. "
+                f"Must be one of: {sorted(valid_fail_if)}"
             )
 
         valid_schedule, reason = validate_schedule(self.schedule)
         if not valid_schedule:
             raise ValueError(f"Alert '{self.name}': {reason}")
+
+    def asdict(self) -> dict[str, Any]:
+        """Helper method to serialize an Alert as a dictionary"""
+        return dataclasses.asdict(self)
 
 
 def validate_schedule(schedule) -> tuple[bool, str]:
@@ -116,27 +148,24 @@ def validate_schedule(schedule) -> tuple[bool, str]:
     return True, ""
 
 
-def required_fields(dataclass: Type[DataclassType]) -> list[str]:
-    return [
-        field.name
-        for field in dataclasses.fields(dataclass)
-        if field.default is dataclasses.MISSING
-        and field.default_factory is dataclasses.MISSING
-    ]
-
-
 def load_config(path: Path) -> list[Alert]:
-    """Load, validate, and return the list of alerts from a YAML config file.
+    """Load, validate, and return a list of Alerts from a YAML config file.
 
     Raises:
         ValueError: If any alert is missing required fields or has invalid values.
     """
+
+    def format_error(err: str) -> str:
+        """Inner helper function to format error messages with a file path
+        prefix"""
+        return f"{path}: {err}"
+
     with path.open() as f:
         data = yaml.safe_load(f)
 
     raw_alerts = data.get("alerts", [])
     if not raw_alerts:
-        raise ValueError(f"{path}: No top-level `alerts` key found")
+        raise ValueError(format_error("No top-level `alerts` key found"))
 
     alerts = []
     # Exclude optional fields from the required-field check
@@ -146,21 +175,23 @@ def load_config(path: Path) -> list[Alert]:
         if missing:
             label = raw.get("name", f"alert #{i + 1}")
             raise ValueError(
-                f"{path}: {label}: missing required fields: {missing}"
+                format_error(f"{label}: missing required fields: {missing}")
             )
         try:
             alert = Alert(
+                id=raw["id"],
                 name=raw["name"],
                 log_group=raw["log_group"],
                 log_query=raw["log_query"],
-                error_if=raw["error_if"],
+                fail_if=raw["fail_if"],
                 schedule=raw["schedule"],
                 lookback_hours=raw["lookback_hours"],
                 source_file=str(path),
                 aws_sns_topic=raw.get("aws_sns_topic"),
+                failure_message=raw.get("failure_message"),
             )
         except ValueError as exc:
-            raise ValueError(f"{path}: {exc}") from exc
+            raise ValueError(format_error(f"{exc}")) from exc
         alerts.append(alert)
 
     return alerts
@@ -182,15 +213,49 @@ def find_due_alerts(config_files: list[Path], now: datetime) -> list[Alert]:
     return [a for a in all_alerts if is_due(a.schedule, now)]
 
 
+class ResultStatus(enum.Enum):
+    """Possible statuses for a Result"""
+
+    PASS = "PASS"
+    FAIL = "FAIL"
+
+
 @dataclasses.dataclass
 class Result:
-    """Expected structure for a status result for an alert that has been
+    """Expected structure for a status result for an Alert that has been
     checked."""
 
-    name: str
-    passed: bool
-    message: str
-    aws_sns_topic: str | None = None
+    alert: Alert
+    status: ResultStatus
+
+    def asdict(self) -> dict[str, Any]:
+        """Helper method to serialize a Result as a dictionary"""
+        return {"alert": self.alert.asdict(), "status": self.status.name}
+
+    def get_message(self) -> str:
+        """Returns a failure message for the Alert.
+
+        If the Alert passed, returns an empty string. If the Alert failed,
+        checks to see whether the Alert is configured with a custom
+        `failure_message`, and prefers that where present; otherwise, falls
+        back to a default error message based on the Alert configuration."""
+        message = ""
+        if self.status == ResultStatus.FAIL:
+            # Prefer the customized failure message, if one exists
+            if self.alert.failure_message:
+                return self.alert.failure_message
+            if self.alert.fail_if == "match":
+                return (
+                    f"FAIL [{self.alert.name}]: Logs matching '{self.alert.log_query}' found in "
+                    f"'{self.alert.log_group}' in the past {self.alert.lookback_hours}h"
+                )
+            if self.alert.fail_if == "no_match":
+                return (
+                    f"FAIL [{self.alert.name}]: No logs matching '{self.alert.log_query}' found in "
+                    f"'{self.alert.log_group}' in the past {self.alert.lookback_hours}h"
+                )
+
+        return message
 
 
 @dataclasses.dataclass
@@ -200,10 +265,18 @@ class ResultContainer:
     any_failed: bool
     results: list[Result]
 
+    def asdict(self) -> dict[str, Any]:
+        """Helper method to serialize a ResultContainer as a dictionary"""
+        return {
+            "any_failed": self.any_failed,
+            "results": [result.asdict() for result in self.results],
+        }
+
 
 def load_results(result_container_dict: dict) -> list[Result]:
-    """Load a list of status results from a dictionary representation of the
+    """Load a list of alert results from a dictionary representation of the
     result container."""
+    # Validate the fields for the result container
     required_result_container_fields = required_fields(ResultContainer)
     missing_result_container_fields = [
         f
@@ -216,23 +289,50 @@ def load_results(result_container_dict: dict) -> list[Result]:
             f"{missing_result_container_fields}"
         )
 
+    # Iterate each result and validate its required fields, along with the
+    # required fields for the alert that corresponds to each result
     required_result_fields = required_fields(Result)
+    required_alert_fields = required_fields(Alert)
     results: list[Result] = []
     for i, result_dict in enumerate(result_container_dict["results"]):
+        result_label = result_dict.get("name", f"result #{i + 1}")
         missing_result_fields = [
             f for f in required_result_fields if f not in result_dict
         ]
         if missing_result_fields:
-            label = result_dict.get("name", f"result #{i + 1}")
             raise ValueError(
-                f"Result '{label}' missing required fields: "
+                f"Result '{result_label}' missing required fields: "
                 f"{missing_result_fields}"
             )
+        missing_alert_fields = [
+            f for f in required_alert_fields if f not in result_dict["alert"]
+        ]
+        if missing_alert_fields:
+            raise ValueError(
+                f"Alert object in Result '{result_label}' missing required fields: "
+                f"{missing_alert_fields}"
+            )
+        result_status = result_dict["status"]
+        if result_status not in ResultStatus:
+            raise ValueError(
+                f"Result '{result_label}' has invalid status '{result_status}',"
+                " must be one of: ",
+                f"{', '.join(status.name for status in ResultStatus)}",
+            )
         result = Result(
-            name=result_dict["name"],
-            passed=result_dict["passed"],
-            message=result_dict["message"],
-            aws_sns_topic=result_dict.get("aws_sns_topic"),
+            alert=Alert(
+                id=result_dict["alert"]["id"],
+                name=result_dict["alert"]["name"],
+                log_group=result_dict["alert"]["log_group"],
+                log_query=result_dict["alert"]["log_query"],
+                fail_if=result_dict["alert"]["fail_if"],
+                schedule=result_dict["alert"]["schedule"],
+                lookback_hours=result_dict["alert"]["lookback_hours"],
+                source_file=result_dict["alert"]["source_file"],
+                aws_sns_topic=result_dict["alert"].get("aws_sns_topic"),
+                failure_message=result_dict["alert"].get("failure_message"),
+            ),
+            status=ResultStatus[result_status],
         )
         results.append(result)
     return results

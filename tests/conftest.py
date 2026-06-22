@@ -1,6 +1,5 @@
 """Shared test helpers and fixtures for the alerts test suite."""
 
-import dataclasses
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -17,10 +16,11 @@ from alerts.models import Alert
 def make_alert(**overrides) -> Alert:
     """Return a minimal valid Alert, with optional field overrides."""
     base = {
+        "id": "test-alert",
         "name": "Test alert",
         "log_group": "/test/logs",
         "log_query": "info",
-        "error_if": "no_match",
+        "fail_if": "no_match",
         "lookback_hours": 12,
         "schedule": "0 12 * * *",
         "source_file": "test.yml",
@@ -38,7 +38,7 @@ def make_paginator(*pages) -> MagicMock:
 def write_config(path: Path, alerts: list[Alert]) -> Path:
     """Write an alerts config YAML to *path* and return it."""
     path.write_text(
-        yaml.dump({"alerts": [dataclasses.asdict(alert) for alert in alerts]})
+        yaml.dump({"alerts": [alert.asdict() for alert in alerts]})
     )
     return path
 
@@ -60,7 +60,7 @@ MULTI_ALERT_A = make_alert(
     name="A",
     log_group="/g",
     log_query="x",
-    error_if="match",
+    fail_if="match",
     schedule="0 0 * * *",
     lookback_hours=1,
 )
@@ -68,7 +68,7 @@ MULTI_ALERT_B = make_alert(
     name="B",
     log_group="/g",
     log_query="y",
-    error_if="no_match",
+    fail_if="no_match",
     schedule="0 0 * * *",
     lookback_hours=1,
 )
@@ -92,18 +92,20 @@ def find_due_config(tmp_path: Path) -> Path:
     config = {
         "alerts": [
             {
+                "id": "due-alert",
                 "name": "Due alert",
                 "log_group": "/g",
                 "log_query": "info",
-                "error_if": "no_match",
+                "fail_if": "no_match",
                 "schedule": "0 12 * * *",
                 "lookback_hours": 12,
             },
             {
+                "id": "not-due-alert",
                 "name": "Not due alert",
                 "log_group": "/g",
                 "log_query": "info",
-                "error_if": "no_match",
+                "fail_if": "no_match",
                 "schedule": "0 12 1 * *",  # monthly — not due on the 16th
                 "lookback_hours": 12,
             },

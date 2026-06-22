@@ -25,7 +25,7 @@ repos:
   - repo: local
     hooks:
       - id: validate-alert-configs
-        name: Validate alert config files
+        name: validate alert config files
         entry: uv run python -m alerts.validate
         language: system
         files: ^config/.*\.ya?ml$

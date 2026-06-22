@@ -11,6 +11,7 @@ from alerts.models import (
     Alert,
     Result,
     ResultContainer,
+    ResultStatus,
     find_due_alerts,
     is_due,
     load_config,
@@ -43,14 +44,14 @@ class TestAlert:
         with pytest.raises(ValueError, match="must be <"):
             make_alert(name="a" * 101)
 
-    @pytest.mark.parametrize("error_if", ["match", "no_match"])
-    def test_valid_error_if_values(self, error_if: str):
-        alert = make_alert(error_if=error_if)
-        assert alert.error_if == error_if
+    @pytest.mark.parametrize("fail_if", ["match", "no_match"])
+    def test_valid_fail_if_values(self, fail_if: str):
+        alert = make_alert(fail_if=fail_if)
+        assert alert.fail_if == fail_if
 
-    def test_invalid_error_if_raises(self):
-        with pytest.raises(ValueError, match="invalid error_if value"):
-            make_alert(error_if="bad_value")
+    def test_invalid_fail_if_raises(self):
+        with pytest.raises(ValueError, match="invalid fail_if value"):
+            make_alert(fail_if="bad_value")
 
     @pytest.mark.parametrize("lookback_hours", [0, -1, -100])
     def test_nonpositive_lookback_hours_raises(self, lookback_hours: int):
@@ -70,6 +71,29 @@ class TestAlert:
             ValueError, match="must be a 5-field cron expression"
         ):
             make_alert(schedule="0 * * *")
+
+
+# ---------------------------------------------------------------------------
+# Test Result dataclass
+# ---------------------------------------------------------------------------
+
+
+class TestResult:
+    @pytest.mark.parametrize(
+        "alert_override,expected_in_message",
+        [
+            ({"log_group": "/my/group"}, "/my/group"),
+            ({"lookback_hours": 6}, "6"),
+            ({"log_query": "my_pattern"}, "my_pattern"),
+        ],
+    )
+    def test_get_message_returns_expected_content(
+        self, alert_override: dict, expected_in_message: str
+    ):
+        alert = make_alert(fail_if="no_match", **alert_override)
+        result = Result(alert=alert, status=ResultStatus.FAIL)
+
+        assert expected_in_message in result.get_message()
 
 
 # ---------------------------------------------------------------------------
@@ -287,10 +311,11 @@ class TestFindDueAlerts:
         second_config = {
             "alerts": [
                 {
+                    "id": "another-due-alert",
                     "name": "Another due alert",
                     "log_group": "/h",
                     "log_query": "error",
-                    "error_if": "match",
+                    "fail_if": "match",
                     "schedule": "0 12 * * *",
                     "lookback_hours": 6,
                 }
@@ -326,6 +351,7 @@ class TestLoadResults:
 
     def test_raises_on_missing_required_result_fields(self):
         valid_result = {
+            "id": "test-alert",
             "name": "Test alert",
             "passed": True,
             "message": "PASS [Test alert]",
@@ -344,12 +370,14 @@ class TestLoadResults:
             "any_failed": True,
             "results": [
                 {
+                    "id": "alert-a",
                     "name": "Alert A",
                     "passed": False,
                     "message": "FAIL [Alert A]: ...",
                     "aws_sns_topic": "my-topic",
                 },
                 {
+                    "id": "alert-b",
                     "name": "Alert B",
                     "passed": True,
                     "message": "PASS [Alert B]",
@@ -361,9 +389,9 @@ class TestLoadResults:
 
         assert len(results) == 2
         assert all(isinstance(r, Result) for r in results)
-        assert results[0].name == "Alert A"
-        assert results[0].passed is False
-        assert results[0].aws_sns_topic == "my-topic"
-        assert results[1].name == "Alert B"
-        assert results[1].passed is True
-        assert results[1].aws_sns_topic is None
+        assert results[0].alert.name == "Alert A"
+        assert results[0].status == ResultStatus.FAIL
+        assert results[0].alert.aws_sns_topic == "my-topic"
+        assert results[1].alert.name == "Alert B"
+        assert results[1].status == ResultStatus.PASS
+        assert results[1].alert.aws_sns_topic is None

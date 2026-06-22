@@ -25,7 +25,7 @@ import boto3
 from botocore.exceptions import BotoCoreError, ClientError
 
 from alerts.constants import AWS_REGION
-from alerts.models import Result, load_results
+from alerts.models import Result, ResultStatus, load_results
 
 
 def build_topic_arn(account_id: str, topic_name: str) -> str:
@@ -52,28 +52,30 @@ def notify_alerts(results: list[Result], account_id: str, client) -> int:
     """
     failed_notifications: list[str] = []
     for result in results:
-        if result.passed:
-            print(f"Skipping notification for '{result.name}' since it passed")
-            continue
-        if not result.aws_sns_topic:
+        if result.status == ResultStatus.PASS:
             print(
-                f"Skipping notification for '{result.name}' "
+                f"Skipping notification for '{result.alert.name}' since it passed"
+            )
+            continue
+        if not result.alert.aws_sns_topic:
+            print(
+                f"Skipping notification for '{result.alert.name}' "
                 "since it has no aws_sns_topic configured"
             )
             continue
 
-        topic_arn = build_topic_arn(account_id, result.aws_sns_topic)
+        topic_arn = build_topic_arn(account_id, result.alert.aws_sns_topic)
 
         try:
             publish_notification(
-                topic_arn, result.name, result.message, client
+                topic_arn, result.alert.name, result.get_message(), client
             )
-            print(f"Notified [{result.name}] → {topic_arn}")
+            print(f"Notified [{result.alert.name}] → {topic_arn}")
         except (ClientError, BotoCoreError) as exc:
             print(
-                f"ERROR: Failed to notify [{result.name}] → {topic_arn}: {exc}"
+                f"ERROR: Failed to notify [{result.alert.name}] → {topic_arn}: {exc}"
             )
-            failed_notifications.append(result.name)
+            failed_notifications.append(result.alert.name)
 
     if failed_notifications:
         print(

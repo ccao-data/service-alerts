@@ -1,16 +1,28 @@
 alerts:
-  - name: "Spark ingest not run"
+  - id: service-spark-iasworld-not-run
+    name: "Spark ingest not run"
     log_group: /ccao/jobs/spark
     log_query: "?info ?Info ?INFO"
-    error_if: "no_match"
+    fail_if: "no_match"
     schedule: "0 12 * * *"
     lookback_hours: 12
     aws_sns_topic: ccao-cloudwatch-alarm
+    failure_message: >
+      The nightly ingest job that imports data from iasWorld into the
+      CCAO Data team's Athena data lake did not run as expected. Athena data
+      may be out of date or missing. See the Spark console for details:
+      http://datascience.cookcountyassessor.com:8080/
 
-  - name: "Spark ingest error"
+  - id: service-spark-iasworld-error
+    name: "Spark ingest error"
     log_group: /ccao/jobs/spark
     log_query: "?error ?Error ?ERROR ?exception ?Exception ?EXCEPTION"
-    error_if: "match"
+    fail_if: "match"
     schedule: "0 12 * * *"
     lookback_hours: 12
     aws_sns_topic: ccao-cloudwatch-alarm
+    failure_message: >
+      The nightly ingest job that imports data from iasWorld into the
+      CCAO Data team's Athena data lake encountered an unexpected error. Athena
+      data may be out of date or missing. See the CloudWatch logs for details:
+      https://us-east-1.console.aws.amazon.com/cloudwatch/home?region=us-east-1#logsV2:log-groups/log-group/$252Fccao$252Fjobs$252Fspark
