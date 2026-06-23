@@ -1,4 +1,17 @@
-"""Shared data models and config-loading utilities."""
+"""Shared data models and config-loading utilities.
+
+Key models:
+
+- Alert: Configuration for a CloudWatch log alert.
+    Corresponds to a single entry under the top-level `alerts` key in an
+    alert config YAML file.
+- Result: Thin wrapper around an Alert that adds information about the status
+    of the check. Statuses are recorded using the `ResultStatus` enum, which
+    can be one of 'PASS' or 'FAIL'.
+- ResultContainer: Container for one or more Result objects corresponding to
+    Alerts that have been checked. This is the format that the `alerts.check`
+    script produces when called with the `--format json` option.
+"""
 
 import dataclasses
 import enum
@@ -277,7 +290,7 @@ class Result:
 
 @dataclasses.dataclass
 class ResultContainer:
-    """Container for one or more Status objects corresponding to Alerts that
+    """Container for one or more Result objects corresponding to Alerts that
     have been checked."""
 
     any_failed: bool  # Whether any of the Results failed
