@@ -7,7 +7,7 @@ alerts:
     schedule: "0 12 * * *"
     lookback_hours: 12
     aws_sns_topic: ccao-cloudwatch-alarm
-    failure_message: >
+    failure_message: >-
       The nightly ingest job that imports data from iasWorld into the
       CCAO Data team's Athena data lake did not run as expected. Athena data
       may be out of date or missing. See the Spark console for details:
@@ -21,7 +21,7 @@ alerts:
     schedule: "0 12 * * *"
     lookback_hours: 12
     aws_sns_topic: ccao-cloudwatch-alarm
-    failure_message: >
+    failure_message: >-
       The nightly ingest job that imports data from iasWorld into the
       CCAO Data team's Athena data lake encountered an unexpected error. Athena
       data may be out of date or missing. See the CloudWatch logs for details:

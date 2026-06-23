@@ -52,12 +52,6 @@ class TestAlert:
         alert = make_alert(name="Test alert")
         assert alert.name == "Test alert"
 
-    def test_init_errors_include_common_prefix(self):
-        alert_id = "test-id"
-        with pytest.raises(ValueError, match=f"Alert '{alert_id}':"):
-            # Negative lookback hours should raise
-            make_alert(id=alert_id, lookback_hours=-1)
-
     @pytest.mark.parametrize("id", ["test_alert", "test alert"])
     def test_init_id_with_invalid_separator_raises(self, id: str):
         with pytest.raises(ValueError, match="alphanumeric characters"):
@@ -223,12 +217,17 @@ class TestResult:
                 result.alert, field.name
             )
 
-    def test_failure_message_prefers_configured_failure_message(self):
-        failure_message = "test message"
+    def test_status_message_when_pass(self):
+        result = make_result(status=ResultStatus.PASS, name="Test alert")
+        assert result.status_message() == "PASS [Test alert]"
+
+    def test_status_message_prefers_configured_failure_message(self):
         result = make_result(
-            status=ResultStatus.FAIL, failure_message=failure_message
+            status=ResultStatus.FAIL,
+            failure_message="Test message",
+            name="Test alert",
         )
-        assert result.failure_message() == failure_message
+        assert result.status_message() == "FAIL [Test alert]: Test message"
 
     @pytest.mark.parametrize(
         "fail_if,alert_override,expected_in_message",
@@ -241,13 +240,13 @@ class TestResult:
             ("match", {"log_query": "my_pattern"}, "my_pattern"),
         ],
     )
-    def test_failure_message_falls_back_to_default_error_message(
+    def test_status_message_falls_back_to_default_error_message(
         self, fail_if: str, alert_override: dict, expected_in_message: str
     ):
         result = make_result(
             status=ResultStatus.FAIL, fail_if=fail_if, **alert_override
         )
-        message = result.failure_message()
+        message = result.status_message()
         assert expected_in_message in message
 
         if fail_if == "no_match":

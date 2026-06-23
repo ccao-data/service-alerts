@@ -129,7 +129,8 @@ def check_alerts(
         result = evaluate_alert(alert, now, client)
         results.append(result)
         if output_format == "text":
-            print(result.failure_message())
+            print()
+            print(result.status_message())
 
     failures = [
         result for result in results if not result.status == ResultStatus.PASS
@@ -144,9 +145,8 @@ def check_alerts(
             )
         )
     else:
-        print(
-            f"\n{len(results) - len(failures)}/{len(results)} alerts passed."
-        )
+        print()
+        print(f"{len(results) - len(failures)}/{len(results)} alerts passed.")
 
     return 0
 

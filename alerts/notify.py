@@ -68,7 +68,7 @@ def notify_alerts(results: list[Result], account_id: str, client) -> int:
 
         try:
             publish_notification(
-                topic_arn, result.alert.name, result.failure_message(), client
+                topic_arn, result.alert.name, result.status_message(), client
             )
             print(f"Notified [{result.alert.name}] → {topic_arn}")
         except (ClientError, BotoCoreError) as exc:

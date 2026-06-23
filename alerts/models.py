@@ -88,46 +88,33 @@ class Alert:
     def __post_init__(self) -> None:
         """Field validation for Alert objects."""
 
-        def format_error(err: str) -> str:
-            """Inner helper function to format error messages with a common
-            prefix"""
-            return f"Alert '{self.id}': {err}"
-
         # Alert identifiers must be slugs (i.e. alphanumerics with hyphen
         # separators)
         for char in self.id:
             if not (char.isalnum() or char == "-"):
                 raise ValueError(
-                    format_error(
-                        f"id '{self.id}' is invalid, must contain only "
-                        "alphanumeric characters or hyphens"
-                    )
+                    f"id '{self.id}' is invalid, must contain only "
+                    "alphanumeric characters or hyphens"
                 )
 
         # We use alert names in the subject lines of the notification, so
         # prevent them from being too long
         if len(self.name) > 100:
             raise ValueError(
-                format_error(
-                    f"name '{self.name}' is invald, must be < 100 characters"
-                )
+                f"name '{self.name}' is invald, must be < 100 characters"
             )
 
         if self.lookback_hours <= 0:
             raise ValueError(
-                format_error(
-                    "lookback_hours must be a positive integer, "
-                    f"got {self.lookback_hours!r}"
-                )
+                "lookback_hours must be a positive integer, "
+                f"got {self.lookback_hours!r}"
             )
 
         valid_fail_if = frozenset({"match", "no_match"})
         if self.fail_if not in valid_fail_if:
             raise ValueError(
-                format_error(
-                    f"invalid fail_if value '{self.fail_if}', must be one of: "
-                    f"{valid_fail_if}"
-                )
+                f"invalid fail_if value '{self.fail_if}', must be one of: "
+                f"{valid_fail_if}"
             )
 
         # Make sure important optional fields are not empty strings
@@ -137,15 +124,13 @@ class Alert:
                 and not getattr(self, optional_field, "").strip()
             ):
                 raise ValueError(
-                    format_error(
-                        f"{optional_field} must be a non-empty string if set, "
-                        f"got {getattr(self, optional_field)!r}"
-                    )
+                    f"{optional_field} must be a non-empty string if set, "
+                    f"got {getattr(self, optional_field)!r}"
                 )
 
         valid_schedule, reason = validate_schedule(self.schedule)
         if not valid_schedule:
-            raise ValueError(format_error(reason))
+            raise ValueError(reason)
 
     def as_dict(self) -> dict[str, Any]:
         """Serialize an Alert object as a dictionary."""
@@ -231,30 +216,36 @@ class Result:
     status: ResultStatus  # Status of the alert
     alert: Alert
 
-    def failure_message(self) -> str:
-        """Return a failure message for the Alert.
+    def status_message(self) -> str:
+        """Return a status message for the Result.
 
-        If the Alert passed, returns an empty string. If the Alert failed,
-        checks to see whether the Alert is configured with a custom
+        If the Alert passed, returns a simple 'PASS' message. If the Alert
+        failed, checks to see whether the Alert is configured with a custom
         `failure_message`, and prefers that message when present; otherwise,
         falls back to a default error message based on the Alert config."""
-        message = ""
         if self.status == ResultStatus.FAIL:
+            common_prefix = f"FAIL [{self.alert.name}]"
             # Prefer the customized failure message, if one exists
             if self.alert.failure_message:
-                return self.alert.failure_message
+                return f"{common_prefix}: {self.alert.failure_message}"
             if self.alert.fail_if == "match":
                 return (
-                    f"FAIL [{self.alert.name}]: Logs matching '{self.alert.log_query}' found in "
+                    f"{common_prefix}: Logs matching '{self.alert.log_query}' found in "
                     f"'{self.alert.log_group}' in the past {self.alert.lookback_hours}h"
                 )
             if self.alert.fail_if == "no_match":
                 return (
-                    f"FAIL [{self.alert.name}]: No logs matching '{self.alert.log_query}' found in "
+                    f"{common_prefix}: No logs matching '{self.alert.log_query}' found in "
                     f"'{self.alert.log_group}' in the past {self.alert.lookback_hours}h"
                 )
+            else:
+                # Should not be possible, but an raise error for the sake of
+                # defensiveness
+                raise ValueError(
+                    f"Got unexpected `fail_if` value: {self.alert.fail_if}"
+                )
 
-        return message
+        return f"PASS [{self.alert.name}]"
 
     def as_dict(self) -> dict[str, Any]:
         """Serialize a Result object as a dictionary."""
@@ -370,7 +361,7 @@ def validate_schedule(schedule) -> tuple[bool, str]:
     if not hour_values.issubset(ALLOWED_SCHEDULE_HOURS):
         invalid_hours = sorted(hour_values - ALLOWED_SCHEDULE_HOURS)
         return False, (
-            f"Schedule fires at disallowed hours: {invalid_hours}."
+            f"Schedule fires at disallowed hours: {invalid_hours}. "
             f"Must only fire at: {sorted(ALLOWED_SCHEDULE_HOURS)}"
         )
 
