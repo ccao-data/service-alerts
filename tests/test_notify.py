@@ -1,6 +1,7 @@
 """Unit tests for alerts/notify.py."""
 
 import json
+from unittest.mock import MagicMock
 
 import pytest
 from botocore.exceptions import ClientError
@@ -18,7 +19,6 @@ from tests.conftest import (
     TOPIC_ARN,
     TOPIC_NAME,
     make_result,
-    make_sns_client,
 )
 
 # ---------------------------------------------------------------------------
@@ -42,34 +42,38 @@ class TestBuildTopicArn:
 
 
 class TestPublishNotification:
-    def test_publish_notification_calls_sns_publish(self):
-        client = make_sns_client()
+    def test_publish_notification_calls_sns_publish(
+        self, sns_client: MagicMock
+    ):
         publish_notification(
-            TOPIC_ARN, "My alert", "FAIL [My alert]: ...", client
+            TOPIC_ARN, "My alert", "FAIL [My alert]: ...", sns_client
         )
-        client.publish.assert_called_once()
+        sns_client.publish.assert_called_once()
 
-    def test_publish_notification_passes_correct_arn(self):
-        client = make_sns_client()
+    def test_publish_notification_passes_correct_arn(
+        self, sns_client: MagicMock
+    ):
         publish_notification(
-            TOPIC_ARN, "My alert", "FAIL [My alert]: ...", client
+            TOPIC_ARN, "My alert", "FAIL [My alert]: ...", sns_client
         )
-        _, kwargs = client.publish.call_args
+        _, kwargs = sns_client.publish.call_args
         assert kwargs["TopicArn"] == TOPIC_ARN
 
-    def test_publish_notification_subject_contains_alert_name(self):
-        client = make_sns_client()
+    def test_publish_notification_subject_contains_alert_name(
+        self, sns_client: MagicMock
+    ):
         publish_notification(
-            TOPIC_ARN, "My alert", "FAIL [My alert]: ...", client
+            TOPIC_ARN, "My alert", "FAIL [My alert]: ...", sns_client
         )
-        _, kwargs = client.publish.call_args
+        _, kwargs = sns_client.publish.call_args
         assert "My alert" in kwargs["Subject"]
 
-    def test_publish_notification_message_is_full_message(self):
-        client = make_sns_client()
+    def test_publish_notification_message_is_full_message(
+        self, sns_client: MagicMock
+    ):
         msg = "FAIL [My alert]: No logs matching 'info' found in '/g' in the past 12h"
-        publish_notification(TOPIC_ARN, "My alert", msg, client)
-        _, kwargs = client.publish.call_args
+        publish_notification(TOPIC_ARN, "My alert", msg, sns_client)
+        _, kwargs = sns_client.publish.call_args
         assert kwargs["Message"] == msg
 
 
@@ -79,52 +83,49 @@ class TestPublishNotification:
 
 
 class TestNotifyAlerts:
-    def test_returns_0_when_no_failures(self):
-        client = make_sns_client()
+    def test_returns_0_when_no_failures(self, sns_client: MagicMock):
         result = make_result(status=ResultStatus.PASS)
-        assert notify_alerts([result], ACCOUNT_ID, client) == 0
-        client.publish.assert_not_called()
+        assert notify_alerts([result], ACCOUNT_ID, sns_client) == 0
+        sns_client.publish.assert_not_called()
 
-    def test_returns_0_when_failure_has_no_topic(self):
-        client = make_sns_client()
+    def test_returns_0_when_failure_has_no_topic(self, sns_client: MagicMock):
         result = make_result(status=ResultStatus.FAIL, aws_sns_topic=None)
-        assert notify_alerts([result], ACCOUNT_ID, client) == 0
-        client.publish.assert_not_called()
+        assert notify_alerts([result], ACCOUNT_ID, sns_client) == 0
+        sns_client.publish.assert_not_called()
 
-    def test_publishes_for_failed_alert_with_topic(self):
-        client = make_sns_client()
+    def test_publishes_for_failed_alert_with_topic(
+        self, sns_client: MagicMock
+    ):
         result = make_result(
             status=ResultStatus.FAIL, aws_sns_topic=TOPIC_NAME
         )
-        notify_alerts([result], ACCOUNT_ID, client)
-        client.publish.assert_called_once()
+        notify_alerts([result], ACCOUNT_ID, sns_client)
+        sns_client.publish.assert_called_once()
 
-    def test_constructs_correct_arn_for_publish(self):
-        client = make_sns_client()
+    def test_constructs_correct_arn_for_publish(self, sns_client: MagicMock):
         result = make_result(
             status=ResultStatus.FAIL, aws_sns_topic=TOPIC_NAME
         )
-        notify_alerts([result], ACCOUNT_ID, client)
-        _, kwargs = client.publish.call_args
+        notify_alerts([result], ACCOUNT_ID, sns_client)
+        _, kwargs = sns_client.publish.call_args
         assert kwargs["TopicArn"] == TOPIC_ARN
 
-    def test_returns_0_on_successful_publish(self):
-        client = make_sns_client()
+    def test_returns_0_on_successful_publish(self, sns_client: MagicMock):
         result = make_result(status=ResultStatus.FAIL)
-        assert notify_alerts([result], ACCOUNT_ID, client) == 0
+        assert notify_alerts([result], ACCOUNT_ID, sns_client) == 0
 
-    def test_returns_1_on_publish_failure(self):
-        client = make_sns_client()
-        client.publish.side_effect = ClientError(
+    def test_returns_1_on_publish_failure(self, sns_client: MagicMock):
+        sns_client.publish.side_effect = ClientError(
             {"Error": {"Code": "NotFound", "Message": "Topic not found"}},
             "Publish",
         )
         result = make_result(status=ResultStatus.FAIL)
-        assert notify_alerts([result], ACCOUNT_ID, client) == 1
+        assert notify_alerts([result], ACCOUNT_ID, sns_client) == 1
 
-    def test_continues_publishing_after_one_failure(self):
-        client = make_sns_client()
-        client.publish.side_effect = [
+    def test_continues_publishing_after_one_failure(
+        self, sns_client: MagicMock
+    ):
+        sns_client.publish.side_effect = [
             ClientError(
                 {"Error": {"Code": "NotFound", "Message": "Topic not found"}},
                 "Publish",
@@ -135,24 +136,22 @@ class TestNotifyAlerts:
             make_result(status=ResultStatus.FAIL),
             make_result(status=ResultStatus.FAIL),
         ]
-        assert notify_alerts(results, ACCOUNT_ID, client) == 1
-        assert client.publish.call_count == 2
+        assert notify_alerts(results, ACCOUNT_ID, sns_client) == 1
+        assert sns_client.publish.call_count == 2
 
-    def test_skips_passed_alerts(self):
-        client = make_sns_client()
+    def test_skips_passed_alerts(self, sns_client: MagicMock):
         results = [
             make_result(status=ResultStatus.PASS, name="Passing alert"),
             make_result(status=ResultStatus.FAIL, name="Failing alert"),
         ]
-        notify_alerts(results, ACCOUNT_ID, client)
-        assert client.publish.call_count == 1
-        _, kwargs = client.publish.call_args
+        notify_alerts(results, ACCOUNT_ID, sns_client)
+        assert sns_client.publish.call_count == 1
+        _, kwargs = sns_client.publish.call_args
         assert "Failing alert" in kwargs["Subject"]
 
-    def test_empty_results_returns_0(self):
-        client = make_sns_client()
-        assert notify_alerts([], ACCOUNT_ID, client) == 0
-        client.publish.assert_not_called()
+    def test_empty_results_returns_0(self, sns_client: MagicMock):
+        assert notify_alerts([], ACCOUNT_ID, sns_client) == 0
+        sns_client.publish.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -187,8 +186,8 @@ class TestMain:
         with pytest.raises(ValueError, match="empty"):
             main()
 
-    def test_main_publishes_to_boto_client_for_all_failing_alerts(
-        self, mocker
+    def test_main_publishes_to_boto_sns_client_for_all_failing_alerts(
+        self, mocker, sns_client: MagicMock
     ):
         results_json = json.dumps(
             {
@@ -210,9 +209,8 @@ class TestMain:
         mocker.patch(
             "sys.argv", ["notify", results_json, "--account-id", ACCOUNT_ID]
         )
-        mock_client = make_sns_client()
-        mocker.patch("alerts.notify.boto3.client", return_value=mock_client)
+        mocker.patch("alerts.notify.boto3.client", return_value=sns_client)
 
         main()
 
-        assert mock_client.publish.call_count == 2
+        assert sns_client.publish.call_count == 2
