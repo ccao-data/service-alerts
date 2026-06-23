@@ -6,7 +6,11 @@ from unittest.mock import MagicMock
 import pytest
 import yaml
 
-from alerts.models import Alert
+from alerts.models import Alert, Result, ResultStatus
+
+ACCOUNT_ID = "123456789012"
+TOPIC_NAME = "my-topic"
+TOPIC_ARN = f"arn:aws:sns:us-east-1:{ACCOUNT_ID}:{TOPIC_NAME}"
 
 # ---------------------------------------------------------------------------
 # Helper functions
@@ -23,9 +27,20 @@ def make_alert(**overrides) -> Alert:
         "fail_if": "no_match",
         "lookback_hours": 12,
         "schedule": "0 12 * * *",
-        "source_file": "test.yml",
+        "aws_sns_topic": TOPIC_NAME,
     }
     return Alert(**{**base, **overrides})  # ty: ignore[invalid-argument-type]
+
+
+def make_result(
+    *, status: ResultStatus = ResultStatus.FAIL, **alert_overrides
+) -> Result:
+    """Return a minimal alert result with optional overrides."""
+    alert = make_alert(**alert_overrides)
+    return Result(
+        alert=alert,
+        status=status,
+    )
 
 
 def make_paginator(*pages) -> MagicMock:
@@ -33,6 +48,11 @@ def make_paginator(*pages) -> MagicMock:
     client = MagicMock()
     client.get_paginator.return_value.paginate.return_value = iter(pages)
     return client
+
+
+def make_sns_client() -> MagicMock:
+    """Return a mock AWS SNS client."""
+    return MagicMock()
 
 
 def write_config(path: Path, alerts: list[Alert]) -> Path:
@@ -57,6 +77,7 @@ def write_raw_config(path: Path, alerts: list[dict]) -> Path:
 SINGLE_ALERT = make_alert()
 
 MULTI_ALERT_A = make_alert(
+    id="a",
     name="A",
     log_group="/g",
     log_query="x",
@@ -65,6 +86,7 @@ MULTI_ALERT_A = make_alert(
     lookback_hours=1,
 )
 MULTI_ALERT_B = make_alert(
+    id="b",
     name="B",
     log_group="/g",
     log_query="y",

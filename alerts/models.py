@@ -49,13 +49,16 @@ class Alert:
             evaluated. Checked against the past hour each time the workflow runs.
         lookback_hours: How far back (in hours) to search for matching log events.
             Must be a positive integer.
-        source_file: Path to the config file this alert was loaded from.
         aws_sns_topic: Optional SNS topic name to notify when this alert fails.
             The full ARN is constructed at runtime; only the topic name is stored
             here to avoid embedding the AWS account ID in config files.
         failure_message: Optional message to send for notification failures.
             When absent, the code will construct a simple default message based
             on the other configuration values for the Alert.
+        source_file: Optional path to the config file this alert was loaded
+            from. Not configured directly by the user in the alert config file;
+            instead, the code that parses Alerts from config files wll set this
+            automatically.
     """
 
     id: str
@@ -65,47 +68,71 @@ class Alert:
     fail_if: Literal["match", "no_match"]
     schedule: str
     lookback_hours: int
-    source_file: str | None = None
     aws_sns_topic: str | None = None
     failure_message: str | None = None
+    source_file: str | None = None
 
     def __post_init__(self) -> None:
         """Field validation for this dataclass."""
+
+        def format_error(err: str) -> str:
+            """Inner helper function to format error messages with a common
+            prefix"""
+            return f"Alert '{self.id}': {err}"
+
         # Alert identifiers must be slugs (i.e. alphanumerics with hyphen
         # separators)
         for char in self.id:
             if not (char.isalnum() or char == "-"):
                 raise ValueError(
-                    f"Alert id {self.id} is invalid; must contain only "
-                    "alphanumeric characters or hyphens"
+                    format_error(
+                        f"id '{self.id}' is invalid, must contain only "
+                        "alphanumeric characters or hyphens"
+                    )
                 )
+
         # We use alert names in the subject lines of the notification, so
         # prevent them from being too long
         if len(self.name) > 100:
             raise ValueError(
-                f"Alert '{self.name}': name must be < 100 characters"
+                format_error(
+                    f"name '{self.name}' is invald, must be < 100 characters"
+                )
             )
+
         if self.lookback_hours <= 0:
             raise ValueError(
-                f"Alert '{self.name}': lookback_hours must be a positive integer, "
-                f"got {self.lookback_hours!r}"
-            )
-        if self.aws_sns_topic is not None and not self.aws_sns_topic.strip():
-            raise ValueError(
-                f"Alert '{self.name}': aws_sns_topic must be a non-empty string "
-                f"if set, got {self.aws_sns_topic!r}"
+                format_error(
+                    "lookback_hours must be a positive integer, "
+                    f"got {self.lookback_hours!r}"
+                )
             )
 
         valid_fail_if = frozenset({"match", "no_match"})
         if self.fail_if not in valid_fail_if:
             raise ValueError(
-                f"Alert '{self.name}': invalid fail_if value '{self.fail_if}'. "
-                f"Must be one of: {sorted(valid_fail_if)}"
+                format_error(
+                    f"invalid fail_if value '{self.fail_if}', must be one of: "
+                    f"{valid_fail_if}"
+                )
             )
+
+        # Make sure important optional fields are not empty strings
+        for optional_field in ["aws_sns_topic", "failure_message"]:
+            if (
+                getattr(self, optional_field) is not None
+                and not getattr(self, optional_field, "").strip()
+            ):
+                raise ValueError(
+                    format_error(
+                        f"{optional_field} must be a non-empty string if set, "
+                        f"got {getattr(self, optional_field)!r}"
+                    )
+                )
 
         valid_schedule, reason = validate_schedule(self.schedule)
         if not valid_schedule:
-            raise ValueError(f"Alert '{self.name}': {reason}")
+            raise ValueError(format_error(reason))
 
     def asdict(self) -> dict[str, Any]:
         """Helper method to serialize an Alert as a dictionary"""
@@ -156,7 +183,7 @@ def load_config(path: Path) -> list[Alert]:
     """
 
     def format_error(err: str) -> str:
-        """Inner helper function to format error messages with a file path
+        """Inner helper function to format error messages with a common
         prefix"""
         return f"{path}: {err}"
 
@@ -173,9 +200,11 @@ def load_config(path: Path) -> list[Alert]:
     for i, raw in enumerate(raw_alerts):
         missing = [f for f in required_alert_fields if f not in raw]
         if missing:
-            label = raw.get("name", f"alert #{i + 1}")
+            label = raw.get("id", f"alert #{i + 1}")
             raise ValueError(
-                format_error(f"{label}: missing required fields: {missing}")
+                format_error(
+                    f"{label}: missing required fields: {', '.join(missing)}"
+                )
             )
         try:
             alert = Alert(
@@ -295,30 +324,36 @@ def load_results(result_container_dict: dict) -> list[Result]:
     required_alert_fields = required_fields(Alert)
     results: list[Result] = []
     for i, result_dict in enumerate(result_container_dict["results"]):
-        result_label = result_dict.get("name", f"result #{i + 1}")
+        label = result_dict.get("alert", {}).get("id", f"#{i + 1}")
+
         missing_result_fields = [
             f for f in required_result_fields if f not in result_dict
         ]
         if missing_result_fields:
             raise ValueError(
-                f"Result '{result_label}' missing required fields: "
+                f"Result for Alert {label} missing required fields: "
                 f"{missing_result_fields}"
             )
+
         missing_alert_fields = [
             f for f in required_alert_fields if f not in result_dict["alert"]
         ]
         if missing_alert_fields:
             raise ValueError(
-                f"Alert object in Result '{result_label}' missing required fields: "
+                f"Alert {label} missing required fields: "
                 f"{missing_alert_fields}"
             )
-        result_status = result_dict["status"]
-        if result_status not in ResultStatus:
+
+        result_status_str = result_dict["status"]
+        try:
+            result_status = ResultStatus[result_status_str]
+        except KeyError:
             raise ValueError(
-                f"Result '{result_label}' has invalid status '{result_status}',"
-                " must be one of: ",
+                f"Result for Alert {label} has invalid status "
+                f"'{result_status_str}', must be one of: ",
                 f"{', '.join(status.name for status in ResultStatus)}",
             )
+
         result = Result(
             alert=Alert(
                 id=result_dict["alert"]["id"],
@@ -332,7 +367,8 @@ def load_results(result_container_dict: dict) -> list[Result]:
                 aws_sns_topic=result_dict["alert"].get("aws_sns_topic"),
                 failure_message=result_dict["alert"].get("failure_message"),
             ),
-            status=ResultStatus[result_status],
+            status=result_status,
         )
         results.append(result)
+
     return results

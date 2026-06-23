@@ -1,5 +1,6 @@
 """Unit tests for alerts/check.py."""
 
+import dataclasses
 import json
 from datetime import datetime, timezone
 from pathlib import Path
@@ -9,7 +10,7 @@ import pytest_mock
 import yaml
 
 from alerts.check import check_alerts, evaluate_alert, query_cloudwatch
-from alerts.models import ResultStatus
+from alerts.models import Result, ResultStatus
 from tests.conftest import make_alert, make_paginator
 
 UTC = timezone.utc
@@ -50,9 +51,7 @@ class TestQueryCloudWatch:
 
     def test_passes_correct_time_window(self):
         client = make_paginator({"events": []})
-
         query_cloudwatch("/test/logs", "info", 12, _NOW, client)
-
         _, kwargs = client.get_paginator.return_value.paginate.call_args
         assert kwargs["startTime"] == int(
             (_NOW.timestamp() - 12 * 3600) * 1000
@@ -61,9 +60,7 @@ class TestQueryCloudWatch:
 
     def test_passes_correct_filter_pattern_and_log_group(self):
         client = make_paginator({"events": []})
-
         query_cloudwatch("/test/logs", "my_pattern", 6, _NOW, client)
-
         _, kwargs = client.get_paginator.return_value.paginate.call_args
         assert kwargs["filterPattern"] == "my_pattern"
         assert kwargs["logGroupName"] == "/test/logs"
@@ -87,7 +84,6 @@ class TestEvaluateAlert:
                 "no_match",
                 True,
                 ResultStatus.PASS,
-                "PASS",
             ),  # logs found when required → pass
             (
                 "match",
@@ -110,9 +106,8 @@ class TestEvaluateAlert:
         alert = make_alert(fail_if=fail_if)
         events = [{"message": "hit"}] if found else []
         client = make_paginator({"events": events})
-
         result = evaluate_alert(alert, _EVAL_NOW, client)
-
+        assert result.alert == alert
         assert result.status == expected_status
 
 
@@ -150,24 +145,12 @@ class TestCheckAlerts:
     ):
         config = {
             "alerts": [
-                {
-                    "id": "alert-a",
-                    "name": "Alert A",
-                    "log_group": "/g",
-                    "log_query": "info",
-                    "fail_if": "no_match",
-                    "schedule": "0 12 * * *",
-                    "lookback_hours": 1,
-                },
-                {
-                    "id": "alert-b",
-                    "name": "Alert B",
-                    "log_group": "/g",
-                    "log_query": "error",
-                    "fail_if": "match",
-                    "schedule": "0 12 * * *",
-                    "lookback_hours": 1,
-                },
+                make_alert(
+                    id="alert-a", name="Alert A", schedule="0 12 * * *"
+                ).asdict(),
+                make_alert(
+                    id="alert-b", name="Alert B", schedule="0 12 * * *"
+                ).asdict(),
             ]
         }
         config_file = tmp_path / "svc.yml"
@@ -258,24 +241,18 @@ class TestCheckAlerts:
     ):
         config = {
             "alerts": [
-                {
-                    "id": "failing-alert",
-                    "name": "Failing alert",
-                    "log_group": "/g",
-                    "log_query": "info",
-                    "fail_if": "no_match",
-                    "schedule": "0 12 * * *",
-                    "lookback_hours": 1,
-                },
-                {
-                    "id": "passing-alert",
-                    "name": "Passing alert",
-                    "log_group": "/g",
-                    "log_query": "error",
-                    "fail_if": "match",
-                    "schedule": "0 12 * * *",
-                    "lookback_hours": 1,
-                },
+                make_alert(
+                    id="failing-alert",
+                    name="Failing alert",
+                    fail_if="no_match",
+                    schedule="0 12 * * *",
+                ).asdict(),
+                make_alert(
+                    id="passing-alert",
+                    name="Passing alert",
+                    fail_if="match",
+                    schedule="0 12 * * *",
+                ).asdict(),
             ]
         }
         config_file = tmp_path / "svc.yml"
@@ -370,12 +347,9 @@ class TestCheckAlertsJsonFormat:
         )
         parsed = json.loads(capsys.readouterr().out)
         result = parsed["results"][0]
-        assert set(result.keys()) == {
-            "name",
-            "passed",
-            "message",
-            "aws_sns_topic",
-        }
+        assert set(result.keys()) == set(
+            field.name for field in dataclasses.fields(Result)
+        )
 
     def test_results_include_sns_topic(
         self,
@@ -383,20 +357,7 @@ class TestCheckAlertsJsonFormat:
         mocker: pytest_mock.MockerFixture,
         capsys: pytest.CaptureFixture,
     ):
-        config = {
-            "alerts": [
-                {
-                    "id": "spark-alert",
-                    "name": "Spark alert",
-                    "log_group": "/g",
-                    "log_query": "info",
-                    "fail_if": "no_match",
-                    "schedule": "0 12 * * *",
-                    "lookback_hours": 1,
-                    "aws_sns_topic": "my-topic",
-                }
-            ]
-        }
+        config = {"alerts": [make_alert(aws_sns_topic="my-topic").asdict()]}
         config_file = tmp_path / "svc.yml"
         config_file.write_text(yaml.dump(config))
         mocker.patch(
@@ -409,7 +370,7 @@ class TestCheckAlertsJsonFormat:
             now=_FIND_NOW,
         )
         parsed = json.loads(capsys.readouterr().out)
-        assert parsed["results"][0]["aws_sns_topic"] == "my-topic"
+        assert parsed["results"][0]["alert"]["aws_sns_topic"] == "my-topic"
 
     def test_exit_code_0_on_failure_with_json_format(
         self, find_due_config: Path, mocker: pytest_mock.MockerFixture

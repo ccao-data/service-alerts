@@ -52,18 +52,8 @@ class TestValidateConfigs:
     def test_missing_required_field_fails(
         self, tmp_path: Path, capsys: pytest.CaptureFixture
     ):
-        raw = {
-            k: v
-            for k, v in {
-                "id": "test-alert",
-                "name": "Test alert",
-                "log_group": "/g",
-                "log_query": "info",
-                "error_if": "no_match",
-                "schedule": "0 12 * * *",
-                # lookback_hours intentionally omitted
-            }.items()
-        }
+        raw = make_alert().asdict()
+        del raw["lookback_hours"]
         config = write_raw_config(tmp_path / "svc.yml", [raw])
         exit_code = validate_configs([config])
         assert exit_code == 1
@@ -72,15 +62,8 @@ class TestValidateConfigs:
     def test_invalid_field_value_fails(
         self, tmp_path: Path, capsys: pytest.CaptureFixture
     ):
-        raw = {
-            "id": "test-alert",
-            "name": "Test alert",
-            "log_group": "/g",
-            "log_query": "info",
-            "error_if": "bad_value",
-            "schedule": "0 12 * * *",
-            "lookback_hours": 1,
-        }
+        raw = make_alert().asdict()
+        raw["fail_if"] = "bad_value"
         config = write_raw_config(tmp_path / "svc.yml", [raw])
         exit_code = validate_configs([config])
         assert exit_code == 1
@@ -100,10 +83,10 @@ class TestValidateConfigs:
 
     def test_multiple_valid_configs_all_pass(self, tmp_path: Path):
         config_a = write_config(
-            tmp_path / "a.yml", [make_alert(name="Alert A")]
+            tmp_path / "a.yml", [make_alert(id="alert-a", name="Alert A")]
         )
         config_b = write_config(
-            tmp_path / "b.yml", [make_alert(name="Alert B")]
+            tmp_path / "b.yml", [make_alert(id="alert-b", name="Alert B")]
         )
         assert validate_configs([config_a, config_b]) == 0
 
