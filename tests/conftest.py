@@ -58,7 +58,7 @@ def make_sns_client() -> MagicMock:
 def write_config(path: Path, alerts: list[Alert]) -> Path:
     """Write an alerts config YAML to *path* and return it."""
     path.write_text(
-        yaml.dump({"alerts": [alert.asdict() for alert in alerts]})
+        yaml.dump({"alerts": [alert.as_dict() for alert in alerts]})
     )
     return path
 

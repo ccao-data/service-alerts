@@ -147,10 +147,10 @@ class TestCheckAlerts:
             "alerts": [
                 make_alert(
                     id="alert-a", name="Alert A", schedule="0 12 * * *"
-                ).asdict(),
+                ).as_dict(),
                 make_alert(
                     id="alert-b", name="Alert B", schedule="0 12 * * *"
-                ).asdict(),
+                ).as_dict(),
             ]
         }
         config_file = tmp_path / "svc.yml"
@@ -246,13 +246,13 @@ class TestCheckAlerts:
                     name="Failing alert",
                     fail_if="no_match",
                     schedule="0 12 * * *",
-                ).asdict(),
+                ).as_dict(),
                 make_alert(
                     id="passing-alert",
                     name="Passing alert",
                     fail_if="match",
                     schedule="0 12 * * *",
-                ).asdict(),
+                ).as_dict(),
             ]
         }
         config_file = tmp_path / "svc.yml"
@@ -357,7 +357,7 @@ class TestCheckAlertsJsonFormat:
         mocker: pytest_mock.MockerFixture,
         capsys: pytest.CaptureFixture,
     ):
-        config = {"alerts": [make_alert(aws_sns_topic="my-topic").asdict()]}
+        config = {"alerts": [make_alert(aws_sns_topic="my-topic").as_dict()]}
         config_file = tmp_path / "svc.yml"
         config_file.write_text(yaml.dump(config))
         mocker.patch(

@@ -13,7 +13,7 @@ import collections
 import sys
 from pathlib import Path
 
-from alerts.models import Alert, load_config
+from alerts.models import Alert
 
 
 def validate_configs(paths: list[Path]) -> int:
@@ -22,7 +22,7 @@ def validate_configs(paths: list[Path]) -> int:
     failed: list[str] = []
     for path in paths:
         try:
-            alerts = load_config(path)
+            alerts = Alert.list_from_file(path)
             all_alerts += alerts
             print(f"OK ({len(alerts)} alert(s)): {path}")
         except (ValueError, Exception) as exc:

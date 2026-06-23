@@ -14,8 +14,6 @@ from alerts.models import (
     ResultStatus,
     find_due_alerts,
     is_due,
-    load_config,
-    load_results,
     required_fields,
     validate_schedule,
 )
@@ -100,10 +98,328 @@ class TestAlert:
         ):
             make_alert(schedule="0 * * *")
 
-    def test_asdict_returns_correctly_populated_dictionary(self):
-        alert_dict = SINGLE_ALERT.asdict()
+    def test_as_dict_returns_correctly_populated_dictionary(self):
+        alert_dict = SINGLE_ALERT.as_dict()
         for field in dataclasses.fields(Alert):
             assert alert_dict[field.name] == getattr(SINGLE_ALERT, field.name)
+
+    def test_from_dict_returns_correctly_populated_object(self):
+        alert_dict = SINGLE_ALERT.as_dict()
+        parsed_alert = Alert.from_dict(alert_dict)
+        assert parsed_alert == SINGLE_ALERT
+
+    def test_from_dict_raises_on_missing_required_fields(self):
+        for field in required_fields(Alert):
+            alert_dict = SINGLE_ALERT.as_dict()
+            del alert_dict[field]
+            with pytest.raises(
+                ValueError, match="Alert missing required fields"
+            ):
+                Alert.from_dict(alert_dict)
+
+
+# ---------------------------------------------------------------------------
+# Test Alert.list_from_file()
+# ---------------------------------------------------------------------------
+
+
+class TestAlertListFromFile:
+    def test_returns_alert_objects(self, single_alert_config: Path):
+        alerts = Alert.list_from_file(single_alert_config)
+        assert len(alerts) == 1
+        for field in required_fields(Alert):
+            assert getattr(alerts[0], field) == getattr(SINGLE_ALERT, field)
+
+    def test_sets_source_file(self, single_alert_config: Path):
+        alerts = Alert.list_from_file(single_alert_config)
+        assert alerts[0].source_file == str(single_alert_config)
+
+    def test_returns_multiple_alerts(self, multi_alert_config: Path):
+        alerts = Alert.list_from_file(multi_alert_config)
+        for field in required_fields(Alert):
+            assert getattr(alerts[0], field) == getattr(MULTI_ALERT_A, field)
+            assert getattr(alerts[1], field) == getattr(MULTI_ALERT_B, field)
+
+    def test_sets_source_file_for_multiple_alerts(
+        self, multi_alert_config: Path
+    ):
+        alerts = Alert.list_from_file(multi_alert_config)
+        for alert in alerts:
+            assert alert.source_file == str(multi_alert_config)
+
+    def test_all_fields_match(self, single_alert_config: Path):
+        alerts = Alert.list_from_file(single_alert_config)
+        for field in dataclasses.fields(Alert):
+            # Skip `source_file` because it is not set directly upon
+            # Alert instantiation, and rather is set during `list_from_file()`.
+            # We test this field specifically in other tests
+            if field.name != "source_file":
+                assert getattr(alerts[0], field.name) == getattr(
+                    SINGLE_ALERT, field.name
+                )
+
+    def test_raises_when_no_alerts_key(self, tmp_path: Path):
+        config_file = tmp_path / "empty.yml"
+        config_file.write_text(yaml.dump({}))
+        with pytest.raises(ValueError, match="No top-level"):
+            Alert.list_from_file(config_file)
+
+    def test_raises_on_missing_required_field(self, tmp_path: Path):
+        required_alert_fields = required_fields(Alert)
+        for missing_field in required_alert_fields:
+            raw_dict = {
+                k: v
+                for k, v in dataclasses.asdict(SINGLE_ALERT).items()
+                if k != missing_field
+            }
+            config_file = write_raw_config(tmp_path / "svc.yml", [raw_dict])
+
+            # Error prefix will differ depending on whether `Alert.id` is
+            # the missing field
+            match_prefix = (
+                "Alert #1" if missing_field == "id" else f"{SINGLE_ALERT.id}"
+            )
+            with pytest.raises(
+                ValueError,
+                match=(
+                    f"{match_prefix}: Alert missing required fields: {missing_field}"
+                ),
+            ):
+                Alert.list_from_file(config_file)
+
+    def test_error_message_includes_file_path(self, tmp_path: Path):
+        config_file = write_raw_config(tmp_path / "empty.yml", [{}])
+        with pytest.raises(ValueError, match=str(config_file)):
+            # Empty alert should raise
+            Alert.list_from_file(config_file)
+
+
+# ---------------------------------------------------------------------------
+# Test Result dataclass
+# ---------------------------------------------------------------------------
+
+
+class TestResult:
+    def test_as_dict_returns_correctly_populated_dictionary(self):
+        result = make_result(status=ResultStatus.PASS)
+        result_dict = result.as_dict()
+
+        for field in dataclasses.fields(Result):
+            # Skip checking inner `alert` field, because it is an object and
+            # so can't be compared directly. We'll check it separately below
+            if field.name != "alert":
+                # Serialize status for comparison
+                if field.name == "status":
+                    assert result_dict["status"] == result.status.name
+                else:
+                    assert result_dict[field.name] == getattr(
+                        result, field.name
+                    )
+
+        for field in dataclasses.fields(Alert):
+            assert result_dict["alert"][field.name] == getattr(
+                SINGLE_ALERT, field.name
+            )
+
+    def test_failure_message_prefers_configured_failure_message(self):
+        failure_message = "test message"
+        result = make_result(
+            status=ResultStatus.FAIL, failure_message=failure_message
+        )
+        assert result.failure_message() == failure_message
+
+    @pytest.mark.parametrize(
+        "fail_if,alert_override,expected_in_message",
+        [
+            ("no_match", {"log_group": "/my/group"}, "/my/group"),
+            ("no_match", {"lookback_hours": 6}, "6"),
+            ("no_match", {"log_query": "my_pattern"}, "my_pattern"),
+            ("match", {"log_group": "/my/group"}, "/my/group"),
+            ("match", {"lookback_hours": 6}, "6"),
+            ("match", {"log_query": "my_pattern"}, "my_pattern"),
+        ],
+    )
+    def test_failure_message_falls_back_to_default_error_message(
+        self, fail_if: str, alert_override: dict, expected_in_message: str
+    ):
+        result = make_result(
+            status=ResultStatus.FAIL, fail_if=fail_if, **alert_override
+        )
+        message = result.failure_message()
+        assert expected_in_message in message
+
+        if fail_if == "no_match":
+            assert "No logs matching" in message
+
+        if fail_if == "match":
+            assert "Logs matching" in message
+
+    def test_from_dict_returns_correctly_populated_object(self):
+        result = make_result()
+        new_result = Result.from_dict(result.as_dict())
+        assert new_result == result
+
+    def test_from_dict_raises_on_missing_required_result_fields(self):
+        result = make_result()
+        for missing_field in required_fields(Result):
+            result_dict = result.as_dict()
+            del result_dict[missing_field]
+            with pytest.raises(
+                ValueError,
+                match="Result missing required fields",
+            ):
+                Result.from_dict(result_dict)
+
+    def test_from_dict_raises_on_missing_required_alert_fields(self):
+        result = make_result()
+        for missing_field in required_fields(Alert):
+            result_dict = result.as_dict()
+            result_dict["alert"] = {
+                k: v
+                for k, v in SINGLE_ALERT.as_dict().items()
+                if k != missing_field
+            }
+            with pytest.raises(
+                ValueError,
+                match="Alert missing required fields",
+            ):
+                Result.from_dict(result_dict)
+
+    def test_from_dict_raises_on_invalid_status(self):
+        result = make_result()
+        result_dict = result.as_dict()
+        result_dict["status"] = "FOOBAR"
+        with pytest.raises(ValueError, match="status 'FOOBAR' is invalid"):
+            Result.from_dict(result_dict)
+
+
+# ---------------------------------------------------------------------------
+# Test ResultContainer dataclass
+# ---------------------------------------------------------------------------
+
+
+class TestResultContainer:
+    def test_as_dict_returns_correctly_populated_dictionary(self):
+        result = make_result()
+        result_container = ResultContainer(any_failed=False, results=[result])
+        result_container_dict = result_container.as_dict()
+        result_dict = result_container_dict["results"][0]
+
+        assert result_container_dict["any_failed"] is False
+        for field in dataclasses.fields(Result):
+            # Skip checking inner `alert` field, because it is an object and
+            # so can't be compared directly. We'll check it separately below
+            if field.name != "alert":
+                # Serialize status for comparison
+                if field.name == "status":
+                    assert result_dict["status"] == result.status.name
+                else:
+                    assert result_dict[field.name] == getattr(
+                        result, field.name
+                    )
+
+        for field in dataclasses.fields(Alert):
+            assert result_dict["alert"][field.name] == getattr(
+                SINGLE_ALERT, field.name
+            )
+
+    def test_from_dict_returns_correctly_populated_object(self):
+        container_dict = ResultContainer(
+            any_failed=True,
+            results=[
+                Result(
+                    alert=MULTI_ALERT_A,
+                    status=ResultStatus.FAIL,
+                ),
+                Result(
+                    alert=MULTI_ALERT_B,
+                    status=ResultStatus.PASS,
+                ),
+            ],
+        ).as_dict()
+        results = ResultContainer.from_dict(container_dict).results
+
+        assert len(results) == 2
+        assert all(isinstance(r, Result) for r in results)
+        assert results[0].alert.name == MULTI_ALERT_A.name
+        assert results[0].status == ResultStatus.FAIL
+        assert results[1].alert.name == MULTI_ALERT_B.name
+        assert results[1].status == ResultStatus.PASS
+
+    def test_from_dict_raises_on_missing_required_result_container_fields(
+        self,
+    ):
+        for missing_field in required_fields(ResultContainer):
+            container_dict = {
+                k: v
+                for k, v in {"any_failed": False, "results": []}.items()
+                if k != missing_field
+            }
+            with pytest.raises(
+                ValueError,
+                match="ResultContainer object missing required fields",
+            ):
+                ResultContainer.from_dict(container_dict)
+
+    def test_from_dict_raises_on_missing_required_result_fields(self):
+        result = make_result()
+        for missing_field in required_fields(Result):
+            result_dict = result.as_dict()
+            del result_dict[missing_field]
+            container_dict = {"any_failed": False, "results": [result_dict]}
+            with pytest.raises(
+                ValueError,
+                match="Result missing required fields",
+            ):
+                ResultContainer.from_dict(container_dict)
+
+    def test_from_dict_raises_on_missing_required_alert_fields(self):
+        result = make_result()
+        for missing_field in required_fields(Alert):
+            result_dict = result.as_dict()
+            result_dict["alert"] = {
+                k: v
+                for k, v in SINGLE_ALERT.as_dict().items()
+                if k != missing_field
+            }
+            container_dict = {"any_failed": False, "results": [result_dict]}
+            with pytest.raises(
+                ValueError,
+                match="Alert missing required fields",
+            ):
+                ResultContainer.from_dict(container_dict)
+
+    def test_from_dict_raises_on_invalid_result_status(self):
+        result = make_result()
+        result_dict = result.as_dict()
+        result_dict["status"] = "FOOBAR"
+        container_dict = {"any_failed": False, "results": [result_dict]}
+        with pytest.raises(ValueError, match="status 'FOOBAR' is invalid"):
+            ResultContainer.from_dict(container_dict)
+
+    def test_from_dict_correctly_formats_error_message_when_alert_id_present(
+        self,
+    ):
+        result_dict = make_result(id="test-alert").as_dict()
+        del result_dict["status"]
+        container_dict = {"any_failed": False, "results": [result_dict]}
+        with pytest.raises(
+            ValueError,
+            match="Result for Alert test-alert",
+        ):
+            ResultContainer.from_dict(container_dict)
+
+    def test_from_dict_correctly_formats_error_message_when_alert_id_missing(
+        self,
+    ):
+        result_dict = make_result(id="test-alert").as_dict()
+        del result_dict["alert"]
+        container_dict = {"any_failed": False, "results": [result_dict]}
+        with pytest.raises(
+            ValueError,
+            match="Result for Alert #1",
+        ):
+            ResultContainer.from_dict(container_dict)
 
 
 # ---------------------------------------------------------------------------
@@ -158,82 +474,6 @@ class TestValidateSchedule:
         is_valid, reason = validate_schedule(schedule)
         assert not is_valid
         assert "disallowed hours" in reason
-
-
-# ---------------------------------------------------------------------------
-# Test load_config()
-# ---------------------------------------------------------------------------
-
-
-class TestLoadConfig:
-    def test_returns_alert_objects(self, single_alert_config: Path):
-        alerts = load_config(single_alert_config)
-        assert len(alerts) == 1
-        for field in required_fields(Alert):
-            assert getattr(alerts[0], field) == getattr(SINGLE_ALERT, field)
-
-    def test_sets_source_file(self, single_alert_config: Path):
-        alerts = load_config(single_alert_config)
-        assert alerts[0].source_file == str(single_alert_config)
-
-    def test_returns_multiple_alerts(self, multi_alert_config: Path):
-        alerts = load_config(multi_alert_config)
-        for field in required_fields(Alert):
-            assert getattr(alerts[0], field) == getattr(MULTI_ALERT_A, field)
-            assert getattr(alerts[1], field) == getattr(MULTI_ALERT_B, field)
-
-    def test_sets_source_file_for_multiple_alerts(
-        self, multi_alert_config: Path
-    ):
-        alerts = load_config(multi_alert_config)
-        for alert in alerts:
-            assert alert.source_file == str(multi_alert_config)
-
-    def test_all_fields_match(self, single_alert_config: Path):
-        alerts = load_config(single_alert_config)
-        for field in dataclasses.fields(Alert):
-            # Skip `source_file` because it is not set directly upon
-            # Alert instantiation, and rather is set during `load_config()`.
-            # We test this field specifically in other tests
-            if field.name != "source_file":
-                assert getattr(alerts[0], field.name) == getattr(
-                    SINGLE_ALERT, field.name
-                )
-
-    def test_raises_when_no_alerts_key(self, tmp_path: Path):
-        config_file = tmp_path / "empty.yml"
-        config_file.write_text(yaml.dump({}))
-        with pytest.raises(ValueError, match="No top-level"):
-            load_config(config_file)
-
-    def test_raises_on_missing_required_field(self, tmp_path: Path):
-        required_alert_fields = required_fields(Alert)
-        for missing_field in required_alert_fields:
-            raw_dict = {
-                k: v
-                for k, v in dataclasses.asdict(SINGLE_ALERT).items()
-                if k != missing_field
-            }
-            config_file = write_raw_config(tmp_path / "svc.yml", [raw_dict])
-
-            # Error prefix will differ depending on whether `Alert.id` is
-            # the missing field
-            match_prefix = (
-                "alert #1" if missing_field == "id" else f"{SINGLE_ALERT.id}"
-            )
-            with pytest.raises(
-                ValueError,
-                match=(
-                    f"{match_prefix}: missing required fields: {missing_field}"
-                ),
-            ):
-                load_config(config_file)
-
-    def test_error_message_includes_file_path(self, tmp_path: Path):
-        config_file = write_raw_config(tmp_path / "empty.yml", [{}])
-        with pytest.raises(ValueError, match=str(config_file)):
-            # Empty alert should raise
-            load_config(config_file)
 
 
 # ---------------------------------------------------------------------------
@@ -334,187 +574,3 @@ class TestFindDueAlerts:
 
         assert len(due) == 2
         assert {a.name for a in due} == {"Due alert", "Another due alert"}
-
-
-# ---------------------------------------------------------------------------
-# Test Result dataclass
-# ---------------------------------------------------------------------------
-
-
-class TestResult:
-    def test_asdict_returns_correctly_populated_dictionary(self):
-        result = make_result(status=ResultStatus.PASS)
-        result_dict = result.asdict()
-
-        for field in dataclasses.fields(Result):
-            # Skip checking inner `alert` field, because it is an object and
-            # so can't be compared directly. We'll check it separately below
-            if field.name != "alert":
-                # Serialize status for comparison
-                if field.name == "status":
-                    assert result_dict["status"] == result.status.name
-                else:
-                    assert result_dict[field.name] == getattr(
-                        result, field.name
-                    )
-
-        for field in dataclasses.fields(Alert):
-            assert result_dict["alert"][field.name] == getattr(
-                SINGLE_ALERT, field.name
-            )
-
-    def test_get_message_prefers_configured_failure_message(self):
-        failure_message = "test message"
-        result = make_result(
-            status=ResultStatus.FAIL, failure_message=failure_message
-        )
-        assert result.get_message() == failure_message
-
-    @pytest.mark.parametrize(
-        "fail_if,alert_override,expected_in_message",
-        [
-            ("no_match", {"log_group": "/my/group"}, "/my/group"),
-            ("no_match", {"lookback_hours": 6}, "6"),
-            ("no_match", {"log_query": "my_pattern"}, "my_pattern"),
-            ("match", {"log_group": "/my/group"}, "/my/group"),
-            ("match", {"lookback_hours": 6}, "6"),
-            ("match", {"log_query": "my_pattern"}, "my_pattern"),
-        ],
-    )
-    def test_get_message_falls_back_to_default_error_message(
-        self, fail_if: str, alert_override: dict, expected_in_message: str
-    ):
-        result = make_result(
-            status=ResultStatus.FAIL, fail_if=fail_if, **alert_override
-        )
-        message = result.get_message()
-        assert expected_in_message in message
-
-        if fail_if == "no_match":
-            assert "No logs matching" in message
-
-        if fail_if == "match":
-            assert "Logs matching" in message
-
-
-# ---------------------------------------------------------------------------
-# Test ResultContainer dataclass
-# ---------------------------------------------------------------------------
-
-
-class TestResultContainer:
-    def test_asdict_returns_correctly_populated_dictionary(self):
-        result = make_result()
-        result_container = ResultContainer(any_failed=False, results=[result])
-        result_container_dict = result_container.asdict()
-        result_dict = result_container_dict["results"][0]
-
-        assert result_container_dict["any_failed"] is False
-        for field in dataclasses.fields(Result):
-            # Skip checking inner `alert` field, because it is an object and
-            # so can't be compared directly. We'll check it separately below
-            if field.name != "alert":
-                # Serialize status for comparison
-                if field.name == "status":
-                    assert result_dict["status"] == result.status.name
-                else:
-                    assert result_dict[field.name] == getattr(
-                        result, field.name
-                    )
-
-        for field in dataclasses.fields(Alert):
-            assert result_dict["alert"][field.name] == getattr(
-                SINGLE_ALERT, field.name
-            )
-
-
-# ---------------------------------------------------------------------------
-# Test load_results()
-# ---------------------------------------------------------------------------
-
-
-class TestLoadResults:
-    def test_loads_results_from_container_dict(self):
-        container_dict = ResultContainer(
-            any_failed=True,
-            results=[
-                Result(
-                    alert=MULTI_ALERT_A,
-                    status=ResultStatus.FAIL,
-                ),
-                Result(
-                    alert=MULTI_ALERT_B,
-                    status=ResultStatus.PASS,
-                ),
-            ],
-        ).asdict()
-        results = load_results(container_dict)
-
-        assert len(results) == 2
-        assert all(isinstance(r, Result) for r in results)
-        assert results[0].alert.name == MULTI_ALERT_A.name
-        assert results[0].status == ResultStatus.FAIL
-        assert results[1].alert.name == MULTI_ALERT_B.name
-        assert results[1].status == ResultStatus.PASS
-
-    def test_raises_on_missing_required_result_container_fields(self):
-        for missing_field in required_fields(ResultContainer):
-            container_dict = {
-                k: v
-                for k, v in {"any_failed": False, "results": []}.items()
-                if k != missing_field
-            }
-            with pytest.raises(
-                ValueError,
-                match="ResultContainer object missing required fields",
-            ):
-                load_results(container_dict)
-
-    def test_raises_on_missing_required_result_fields(self):
-        result = make_result()
-        for missing_field in required_fields(Result):
-            result_dict = {
-                k: v for k, v in result.asdict().items() if k != missing_field
-            }
-            container_dict = {"any_failed": False, "results": [result_dict]}
-            # Error message prefix will differ if `alert` is missing
-            match_prefix = (
-                "Result for Alert #1"
-                if missing_field == "alert"
-                else f"Result for Alert {SINGLE_ALERT.id}"
-            )
-            with pytest.raises(
-                ValueError,
-                match=f"{match_prefix} missing required fields",
-            ):
-                load_results(container_dict)
-
-    def test_raises_on_missing_required_alert_fields(self):
-        result = make_result()
-        for missing_field in required_fields(Alert):
-            result_dict = result.asdict()
-            result_dict["alert"] = {
-                k: v
-                for k, v in SINGLE_ALERT.asdict().items()
-                if k != missing_field
-            }
-            container_dict = {"any_failed": False, "results": [result_dict]}
-            # Error message prefix will differ if `Alert.id` is missing
-            match_prefix = (
-                "Alert #1"
-                if missing_field == "id"
-                else f"Alert {SINGLE_ALERT.id}"
-            )
-            with pytest.raises(
-                ValueError,
-                match=f"{match_prefix} missing required fields",
-            ):
-                load_results(container_dict)
-
-    def test_raises_on_invalid_result_status(self):
-        result = make_result()
-        result_dict = result.asdict()
-        result_dict["status"] = "FOOBAR"
-        container_dict = {"any_failed": False, "results": [result_dict]}
-        with pytest.raises(ValueError, match="invalid status"):
-            load_results(container_dict)

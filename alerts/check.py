@@ -129,7 +129,7 @@ def check_alerts(
         result = evaluate_alert(alert, now, client)
         results.append(result)
         if output_format == "text":
-            print(result.get_message())
+            print(result.failure_message())
 
     failures = [
         result for result in results if not result.status == ResultStatus.PASS
@@ -140,7 +140,7 @@ def check_alerts(
             json.dumps(
                 ResultContainer(
                     any_failed=bool(failures), results=results
-                ).asdict()
+                ).as_dict()
             )
         )
     else:

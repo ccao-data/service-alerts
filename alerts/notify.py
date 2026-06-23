@@ -25,7 +25,7 @@ import boto3
 from botocore.exceptions import BotoCoreError, ClientError
 
 from alerts.constants import AWS_REGION
-from alerts.models import Result, ResultStatus, load_results
+from alerts.models import Result, ResultContainer, ResultStatus
 
 
 def build_topic_arn(account_id: str, topic_name: str) -> str:
@@ -68,7 +68,7 @@ def notify_alerts(results: list[Result], account_id: str, client) -> int:
 
         try:
             publish_notification(
-                topic_arn, result.alert.name, result.get_message(), client
+                topic_arn, result.alert.name, result.failure_message(), client
             )
             print(f"Notified [{result.alert.name}] → {topic_arn}")
         except (ClientError, BotoCoreError) as exc:
@@ -116,9 +116,9 @@ def main() -> int:
                 "but it is empty"
             )
 
-    results = load_results(results_dict)
+    result_container = ResultContainer.from_dict(results_dict)
     client = boto3.client("sns", region_name=AWS_REGION)
-    return notify_alerts(results, args.account_id, client)
+    return notify_alerts(result_container.results, args.account_id, client)
 
 
 if __name__ == "__main__":

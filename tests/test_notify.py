@@ -198,12 +198,12 @@ class TestMain:
                         status=ResultStatus.FAIL,
                         id="alert-a",
                         name="Alert A",
-                    ).asdict(),
+                    ).as_dict(),
                     make_result(
                         status=ResultStatus.FAIL,
                         id="alert-b",
                         name="Alert B",
-                    ).asdict(),
+                    ).as_dict(),
                 ],
             }
         )

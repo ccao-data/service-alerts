@@ -52,7 +52,7 @@ class TestValidateConfigs:
     def test_missing_required_field_fails(
         self, tmp_path: Path, capsys: pytest.CaptureFixture
     ):
-        raw = make_alert().asdict()
+        raw = make_alert().as_dict()
         del raw["lookback_hours"]
         config = write_raw_config(tmp_path / "svc.yml", [raw])
         exit_code = validate_configs([config])
@@ -62,7 +62,7 @@ class TestValidateConfigs:
     def test_invalid_field_value_fails(
         self, tmp_path: Path, capsys: pytest.CaptureFixture
     ):
-        raw = make_alert().asdict()
+        raw = make_alert().as_dict()
         raw["fail_if"] = "bad_value"
         config = write_raw_config(tmp_path / "svc.yml", [raw])
         exit_code = validate_configs([config])

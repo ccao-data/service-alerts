@@ -73,7 +73,7 @@ class Alert:
     source_file: str | None = None
 
     def __post_init__(self) -> None:
-        """Field validation for this dataclass."""
+        """Field validation for Alert objects."""
 
         def format_error(err: str) -> str:
             """Inner helper function to format error messages with a common
@@ -134,9 +134,198 @@ class Alert:
         if not valid_schedule:
             raise ValueError(format_error(reason))
 
-    def asdict(self) -> dict[str, Any]:
-        """Helper method to serialize an Alert as a dictionary"""
+    def as_dict(self) -> dict[str, Any]:
+        """Serialize an Alert object as a dictionary."""
         return dataclasses.asdict(self)
+
+    @classmethod
+    def from_dict(cls, dct: dict) -> "Alert":
+        """Deserialize an Alert object from a dictionary, validating all fields
+        in the process."""
+        required_alert_fields = required_fields(Alert)
+        missing_alert_fields = [
+            f for f in required_alert_fields if f not in dct
+        ]
+        if missing_alert_fields:
+            raise ValueError(
+                "Alert missing required fields: "
+                f"{', '.join(missing_alert_fields)}"
+            )
+
+        return cls(
+            id=dct["id"],
+            name=dct["name"],
+            log_group=dct["log_group"],
+            log_query=dct["log_query"],
+            fail_if=dct["fail_if"],
+            schedule=dct["schedule"],
+            lookback_hours=dct["lookback_hours"],
+            source_file=dct.get("source_file"),
+            aws_sns_topic=dct.get("aws_sns_topic"),
+            failure_message=dct.get("failure_message"),
+        )
+
+    @classmethod
+    def list_from_file(cls, path: Path) -> list["Alert"]:
+        """Load, validate, and return a list of Alerts from a YAML config file.
+
+        Raises:
+            ValueError: If any alert is missing required fields or has invalid values.
+        """
+
+        def format_error(err: str) -> str:
+            """Inner helper function to format error messages with a common
+            prefix"""
+            return f"{path}: {err}"
+
+        with path.open() as f:
+            data = yaml.safe_load(f)
+
+        raw_alerts = data.get("alerts", [])
+        if not raw_alerts:
+            raise ValueError(format_error("No top-level `alerts` key found"))
+
+        alerts = []
+        for i, raw in enumerate(raw_alerts):
+            label = raw.get("id", f"#{i + 1}")
+            error_prefix = f"Error loading Alert {label}"
+
+            try:
+                alert = Alert.from_dict(raw)
+            except ValueError as exc:
+                raise ValueError(
+                    format_error(f"{error_prefix}: {exc}")
+                ) from exc
+
+            alert.source_file = str(path)
+            alerts.append(alert)
+
+        return alerts
+
+
+class ResultStatus(enum.Enum):
+    """Possible statuses for a Result object."""
+
+    PASS = "PASS"
+    FAIL = "FAIL"
+
+
+@dataclasses.dataclass
+class Result:
+    """Thin wrapper around an Alert object that adds information about the
+    status of the check."""
+
+    status: ResultStatus  # Status of the alert
+    alert: Alert
+
+    def failure_message(self) -> str:
+        """Return a failure message for the Alert.
+
+        If the Alert passed, returns an empty string. If the Alert failed,
+        checks to see whether the Alert is configured with a custom
+        `failure_message`, and prefers that message when present; otherwise,
+        falls back to a default error message based on the Alert config."""
+        message = ""
+        if self.status == ResultStatus.FAIL:
+            # Prefer the customized failure message, if one exists
+            if self.alert.failure_message:
+                return self.alert.failure_message
+            if self.alert.fail_if == "match":
+                return (
+                    f"FAIL [{self.alert.name}]: Logs matching '{self.alert.log_query}' found in "
+                    f"'{self.alert.log_group}' in the past {self.alert.lookback_hours}h"
+                )
+            if self.alert.fail_if == "no_match":
+                return (
+                    f"FAIL [{self.alert.name}]: No logs matching '{self.alert.log_query}' found in "
+                    f"'{self.alert.log_group}' in the past {self.alert.lookback_hours}h"
+                )
+
+        return message
+
+    def as_dict(self) -> dict[str, Any]:
+        """Serialize a Result object as a dictionary."""
+        return {"alert": self.alert.as_dict(), "status": self.status.name}
+
+    @classmethod
+    def from_dict(cls, dct: dict) -> "Result":
+        """Deserialize a Result object from a dictionary, validating all fields
+        in the process."""
+        required_result_fields = required_fields(Result)
+        missing_result_fields = [
+            f for f in required_result_fields if f not in dct
+        ]
+        if missing_result_fields:
+            raise ValueError(
+                "Result missing required fields: "
+                f"{', '.join(missing_result_fields)}"
+            )
+
+        status_str = dct["status"]
+        try:
+            status = ResultStatus[status_str]
+        except KeyError:
+            raise ValueError(
+                f"status '{status_str}' is invalid, must be one of: "
+                f"{', '.join(status.name for status in ResultStatus)}",
+            )
+
+        alert = Alert.from_dict(dct["alert"])
+
+        return cls(status=status, alert=alert)
+
+
+@dataclasses.dataclass
+class ResultContainer:
+    """Container for one or more Status objects corresponding to Alerts that
+    have been checked."""
+
+    any_failed: bool  # Whether any of the Results failed
+    results: list[Result]
+
+    def as_dict(self) -> dict[str, Any]:
+        """Serialize a ResultContainer as a dictionary."""
+        return {
+            "any_failed": self.any_failed,
+            "results": [result.as_dict() for result in self.results],
+        }
+
+    @classmethod
+    def from_dict(cls, dct: dict) -> "ResultContainer":
+        """Deserialize a ResultContainer object from a dictionary, validating
+        all fields in the process."""
+        # Validate the fields for the result container
+        required_result_container_fields = required_fields(cls)
+        missing_result_container_fields = [
+            f for f in required_result_container_fields if f not in dct
+        ]
+        if missing_result_container_fields:
+            raise ValueError(
+                "ResultContainer object missing required fields: "
+                f"{', '.join(missing_result_container_fields)}"
+            )
+
+        # Iterate each Result in the dictionary and validate its required
+        # fields, along with the required fields for the Alert that
+        # accompanies each Result
+        results: list[Result] = []
+        for i, result_dict in enumerate(dct["results"]):
+            label = result_dict.get("alert", {}).get("id", f"#{i + 1}")
+            error_prefix = f"Error loading Result for Alert {label}"
+
+            try:
+                result = Result.from_dict(result_dict)
+            except ValueError as exc:
+                raise ValueError(f"{error_prefix}: {exc}") from exc
+
+            results.append(result)
+
+        return cls(
+            any_failed=any(
+                result.status == ResultStatus.FAIL for result in results
+            ),
+            results=results,
+        )
 
 
 def validate_schedule(schedule) -> tuple[bool, str]:
@@ -175,57 +364,6 @@ def validate_schedule(schedule) -> tuple[bool, str]:
     return True, ""
 
 
-def load_config(path: Path) -> list[Alert]:
-    """Load, validate, and return a list of Alerts from a YAML config file.
-
-    Raises:
-        ValueError: If any alert is missing required fields or has invalid values.
-    """
-
-    def format_error(err: str) -> str:
-        """Inner helper function to format error messages with a common
-        prefix"""
-        return f"{path}: {err}"
-
-    with path.open() as f:
-        data = yaml.safe_load(f)
-
-    raw_alerts = data.get("alerts", [])
-    if not raw_alerts:
-        raise ValueError(format_error("No top-level `alerts` key found"))
-
-    alerts = []
-    # Exclude optional fields from the required-field check
-    required_alert_fields = required_fields(Alert)
-    for i, raw in enumerate(raw_alerts):
-        missing = [f for f in required_alert_fields if f not in raw]
-        if missing:
-            label = raw.get("id", f"alert #{i + 1}")
-            raise ValueError(
-                format_error(
-                    f"{label}: missing required fields: {', '.join(missing)}"
-                )
-            )
-        try:
-            alert = Alert(
-                id=raw["id"],
-                name=raw["name"],
-                log_group=raw["log_group"],
-                log_query=raw["log_query"],
-                fail_if=raw["fail_if"],
-                schedule=raw["schedule"],
-                lookback_hours=raw["lookback_hours"],
-                source_file=str(path),
-                aws_sns_topic=raw.get("aws_sns_topic"),
-                failure_message=raw.get("failure_message"),
-            )
-        except ValueError as exc:
-            raise ValueError(format_error(f"{exc}")) from exc
-        alerts.append(alert)
-
-    return alerts
-
-
 def is_due(schedule: str, now: datetime) -> bool:
     """Return True if the cron schedule fired within the past CHECK_WINDOW_HOURS."""
     cron = croniter(schedule, now)
@@ -238,137 +376,5 @@ def find_due_alerts(config_files: list[Path], now: datetime) -> list[Alert]:
     """Load all config files and return only the alerts due at `now`."""
     all_alerts: list[Alert] = []
     for path in config_files:
-        all_alerts.extend(load_config(path))
+        all_alerts.extend(Alert.list_from_file(path))
     return [a for a in all_alerts if is_due(a.schedule, now)]
-
-
-class ResultStatus(enum.Enum):
-    """Possible statuses for a Result"""
-
-    PASS = "PASS"
-    FAIL = "FAIL"
-
-
-@dataclasses.dataclass
-class Result:
-    """Expected structure for a status result for an Alert that has been
-    checked."""
-
-    alert: Alert
-    status: ResultStatus
-
-    def asdict(self) -> dict[str, Any]:
-        """Helper method to serialize a Result as a dictionary"""
-        return {"alert": self.alert.asdict(), "status": self.status.name}
-
-    def get_message(self) -> str:
-        """Returns a failure message for the Alert.
-
-        If the Alert passed, returns an empty string. If the Alert failed,
-        checks to see whether the Alert is configured with a custom
-        `failure_message`, and prefers that where present; otherwise, falls
-        back to a default error message based on the Alert configuration."""
-        message = ""
-        if self.status == ResultStatus.FAIL:
-            # Prefer the customized failure message, if one exists
-            if self.alert.failure_message:
-                return self.alert.failure_message
-            if self.alert.fail_if == "match":
-                return (
-                    f"FAIL [{self.alert.name}]: Logs matching '{self.alert.log_query}' found in "
-                    f"'{self.alert.log_group}' in the past {self.alert.lookback_hours}h"
-                )
-            if self.alert.fail_if == "no_match":
-                return (
-                    f"FAIL [{self.alert.name}]: No logs matching '{self.alert.log_query}' found in "
-                    f"'{self.alert.log_group}' in the past {self.alert.lookback_hours}h"
-                )
-
-        return message
-
-
-@dataclasses.dataclass
-class ResultContainer:
-    """Container for one or more status results that have been checked."""
-
-    any_failed: bool
-    results: list[Result]
-
-    def asdict(self) -> dict[str, Any]:
-        """Helper method to serialize a ResultContainer as a dictionary"""
-        return {
-            "any_failed": self.any_failed,
-            "results": [result.asdict() for result in self.results],
-        }
-
-
-def load_results(result_container_dict: dict) -> list[Result]:
-    """Load a list of alert results from a dictionary representation of the
-    result container."""
-    # Validate the fields for the result container
-    required_result_container_fields = required_fields(ResultContainer)
-    missing_result_container_fields = [
-        f
-        for f in required_result_container_fields
-        if f not in result_container_dict
-    ]
-    if missing_result_container_fields:
-        raise ValueError(
-            "ResultContainer object missing required fields: "
-            f"{missing_result_container_fields}"
-        )
-
-    # Iterate each result and validate its required fields, along with the
-    # required fields for the alert that corresponds to each result
-    required_result_fields = required_fields(Result)
-    required_alert_fields = required_fields(Alert)
-    results: list[Result] = []
-    for i, result_dict in enumerate(result_container_dict["results"]):
-        label = result_dict.get("alert", {}).get("id", f"#{i + 1}")
-
-        missing_result_fields = [
-            f for f in required_result_fields if f not in result_dict
-        ]
-        if missing_result_fields:
-            raise ValueError(
-                f"Result for Alert {label} missing required fields: "
-                f"{missing_result_fields}"
-            )
-
-        missing_alert_fields = [
-            f for f in required_alert_fields if f not in result_dict["alert"]
-        ]
-        if missing_alert_fields:
-            raise ValueError(
-                f"Alert {label} missing required fields: "
-                f"{missing_alert_fields}"
-            )
-
-        result_status_str = result_dict["status"]
-        try:
-            result_status = ResultStatus[result_status_str]
-        except KeyError:
-            raise ValueError(
-                f"Result for Alert {label} has invalid status "
-                f"'{result_status_str}', must be one of: ",
-                f"{', '.join(status.name for status in ResultStatus)}",
-            )
-
-        result = Result(
-            alert=Alert(
-                id=result_dict["alert"]["id"],
-                name=result_dict["alert"]["name"],
-                log_group=result_dict["alert"]["log_group"],
-                log_query=result_dict["alert"]["log_query"],
-                fail_if=result_dict["alert"]["fail_if"],
-                schedule=result_dict["alert"]["schedule"],
-                lookback_hours=result_dict["alert"]["lookback_hours"],
-                source_file=result_dict["alert"]["source_file"],
-                aws_sns_topic=result_dict["alert"].get("aws_sns_topic"),
-                failure_message=result_dict["alert"].get("failure_message"),
-            ),
-            status=result_status,
-        )
-        results.append(result)
-
-    return results
