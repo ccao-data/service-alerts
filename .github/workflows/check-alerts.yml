@@ -95,9 +95,9 @@ jobs:
         if: steps.run-checks.outputs.check_failed == 'true'
         shell: bash
         run: |
-          echo '${{ steps.run-checks.outputs.results }}' \
-            | uv run python -m alerts.notify \
-                --account-id ${{ secrets.AWS_ACCOUNT_ID }}
+          uv run python -m alerts.notify \
+            '${{ steps.run-checks.outputs.results }}' \
+            --account-id ${{ secrets.AWS_ACCOUNT_ID }}
 
       - name: Fail if any checks failed
         if: steps.run-checks.outputs.check_failed == 'true'
