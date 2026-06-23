@@ -12,7 +12,6 @@ on:
     # this schedule, make sure to update those constants as well.
     - cron: "0 */3 * * *"
   workflow_dispatch:  # Allow manual runs for testing
-  pull_request:  # Enabled for testing; please delete
 
 # Configure a concurrency group so that only one instance of this workflow
 # can run at a given time. If multiple instances want to run at the same time,
