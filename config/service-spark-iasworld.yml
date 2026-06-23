@@ -4,7 +4,8 @@ alerts:
     log_group: /ccao/jobs/spark
     log_query: "?info ?Info ?INFO"
     fail_if: "no_match"
-    schedule: "0 12 * * *"
+    # schedule: "0 12 * * *"
+    schedule: "0 21 * * *"
     lookback_hours: 12
     aws_sns_topic: ccao-cloudwatch-alarm
     failure_message: >-
@@ -18,7 +19,8 @@ alerts:
     log_group: /ccao/jobs/spark
     log_query: "?error ?Error ?ERROR ?exception ?Exception ?EXCEPTION"
     fail_if: "match"
-    schedule: "0 12 * * *"
+    # schedule: "0 12 * * *"
+    schedule: "0 21 * * *"
     lookback_hours: 12
     aws_sns_topic: ccao-cloudwatch-alarm
     failure_message: >-
