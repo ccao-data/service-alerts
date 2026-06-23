@@ -93,10 +93,20 @@ jobs:
 
       - name: Notify failed alerts
         if: steps.run-checks.outputs.check_failed == 'true'
+        env:
+          # Save run results to an env var. This has two benefits:
+          #
+          #   1. GitHub will handle escaping any special characters like quotes
+          #      that might otherwise break parsing
+          #   2. GitHub will sanitize any untrusted input; not a big deal in
+          #      our case, since we expect to trust the input, but useful per
+          #      their guidance nonetheless:
+          #      https://docs.github.com/en/actions/reference/security/secure-use#use-an-intermediate-environment-variable
+          RESULTS: ${{ steps.run-checks.outputs.results }}
         shell: bash
         run: |
           uv run python -m alerts.notify \
-            '${{ steps.run-checks.outputs.results }}' \
+            "$RESULTS" \
             --account-id ${{ secrets.AWS_ACCOUNT_ID }}
 
       - name: Fail if any checks failed

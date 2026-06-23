@@ -2,7 +2,7 @@
 
 Usage:
     results=$(python -m alerts.check config/*.yml --format json) || exit $?
-    python -m alerts.notify '$results' --account-id ACCOUNT_ID
+    python -m alerts.notify "$results" --account-id ACCOUNT_ID
 
 Reads a JSON result object from the first positional argument (as produced by
 `alerts.check --format json`) and publishes a notification to the configured
