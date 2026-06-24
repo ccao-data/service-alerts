@@ -207,7 +207,8 @@ def main() -> int:
     )
     if not config_files:
         raise ValueError(
-            "No config files found in config/ and none were provided",
+            f"No config files provided, and none found in default "
+            f"{str(ALERT_CONFIG_DIR)}/ subdir",
         )
 
     return check_alerts(config_files, args.dry_run, args.output_format)
