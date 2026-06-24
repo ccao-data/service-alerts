@@ -1,9 +1,10 @@
+"""Shared constants"""
+
 from pathlib import Path
 
-# The workflow runs every CHECK_WINDOW_HOURS hours, and is_due() uses the same
-# window. When interval == window, the next workflow run sees any alert fire at
-# exactly `window` hours ago, which fails the strict `<` check and prevents
-# duplicate notifications. See README.md for details.
+# Number of hours to look back when determining whether an alert is due for
+# checking. See README.md for details about why we set this constant to this
+# particular value.
 #
 # This window must match the `on.schedule` configuration for the workflow that
 # runs the checks. If you update this constant, make sure to update the

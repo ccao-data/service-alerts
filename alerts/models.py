@@ -26,8 +26,7 @@ from alerts.constants import ALLOWED_SCHEDULE_HOURS, CHECK_WINDOW_HOURS
 
 
 class DataclassType(Protocol):
-    """Custom type to help us annotate functions that accept a class that is
-    defined as a dataclass."""
+    """Custom type to help us annotate functions that accept a dataclass."""
 
     __dataclass_fields__: dict
 
@@ -70,7 +69,7 @@ class Alert:
             on the other configuration values for the Alert.
         source_file: Optional path to the config file this alert was loaded
             from. Not configured directly by the user in the alert config file;
-            instead, the code that parses Alerts from config files wll set this
+            instead, the code that parses Alerts from config files sets this
             automatically.
     """
 
@@ -215,9 +214,9 @@ class ResultStatus(enum.Enum):
 @dataclasses.dataclass
 class Result:
     """Thin wrapper around an Alert object that adds information about the
-    status of the check."""
+    status of the alert after checking."""
 
-    status: ResultStatus  # Status of the alert
+    status: ResultStatus
     alert: Alert
 
     def status_message(self) -> str:
@@ -229,9 +228,13 @@ class Result:
         falls back to a default error message based on the Alert config."""
         if self.status == ResultStatus.FAIL:
             common_prefix = f"FAIL [{self.alert.name}]"
+
             # Prefer the customized failure message, if one exists
             if self.alert.failure_message:
                 return f"{common_prefix}: {self.alert.failure_message}"
+
+            # If no customized failure message is set, fall back to a simple
+            # default based on the type of check
             if self.alert.fail_if == "match":
                 return (
                     f"{common_prefix}: Logs matching '{self.alert.log_query}' found in "
@@ -243,8 +246,10 @@ class Result:
                     f"'{self.alert.log_group}' in the past {self.alert.lookback_hours}h"
                 )
             else:
-                # Should not be possible, but an raise error for the sake of
-                # defensiveness
+                # It should not be possible to reach this conditional branch
+                # since we validate accepted `fail_if` values when initializing
+                # Alert objects, but raise error so that we fail loudly if
+                # somehow the code breaks that assumption
                 raise ValueError(
                     f"Got unexpected `fail_if` value: {self.alert.fail_if}"
                 )
@@ -302,7 +307,6 @@ class ResultContainer:
     def from_dict(cls, dct: dict) -> "ResultContainer":
         """Deserialize a ResultContainer object from a dictionary, validating
         all fields in the process."""
-        # Validate the fields for the result container
         required_result_container_fields = required_fields(cls)
         missing_result_container_fields = [
             f for f in required_result_container_fields if f not in dct
@@ -313,15 +317,14 @@ class ResultContainer:
                 f"{', '.join(missing_result_container_fields)}"
             )
 
-        # Iterate each Result in the dictionary and validate its required
-        # fields, along with the required fields for the Alert that
-        # accompanies each Result
         results: list[Result] = []
         for i, result_dict in enumerate(dct["results"]):
             label = result_dict.get("alert", {}).get("id", f"#{i + 1}")
             error_prefix = f"Error loading Result for Alert {label}"
 
             try:
+                # This inner `from_dict()` call will in turn validate the
+                # required fields on Result and its associated Alert object
                 result = Result.from_dict(result_dict)
             except ValueError as exc:
                 raise ValueError(f"{error_prefix}: {exc}") from exc
@@ -336,9 +339,8 @@ class ResultContainer:
         )
 
 
-def validate_schedule(schedule) -> tuple[bool, str]:
-    """Validate that a cron expression representing an Alert schedule only fires
-    at permitted times.
+def validate_schedule(schedule: str) -> tuple[bool, str]:
+    """Validate a cron expression representing an Alert schedule.
 
     If a schedule is valid, returns a tuple with two elements: True, and an
     empty string. If a schedule is invalid, returns a tuple containing False,
@@ -373,7 +375,7 @@ def validate_schedule(schedule) -> tuple[bool, str]:
 
 
 def is_due(schedule: str, now: datetime) -> bool:
-    """Return True if the cron schedule fired within the past CHECK_WINDOW_HOURS."""
+    """Return True if a cron `schedule` is due at the time `now`."""
     cron = croniter(schedule, now)
     prev_fire = cron.get_prev(datetime)
     elapsed_seconds = (now - prev_fire).total_seconds()
@@ -381,7 +383,7 @@ def is_due(schedule: str, now: datetime) -> bool:
 
 
 def find_due_alerts(config_files: list[Path], now: datetime) -> list[Alert]:
-    """Load all config files and return only the alerts due at `now`."""
+    """Load config files and return only the alerts due at `now`."""
     all_alerts: list[Alert] = []
     for path in config_files:
         all_alerts.extend(Alert.list_from_file(path))

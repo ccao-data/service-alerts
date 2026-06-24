@@ -38,7 +38,8 @@ def validate_configs(paths: list[Path]) -> int:
         failed.append("")
 
     if failed:
-        print(f"\n{len(failed)} config file(s) failed validation.")
+        print()
+        print(f"{len(failed)} config file(s) failed validation.")
         return 1
 
     return 0

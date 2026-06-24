@@ -8,9 +8,6 @@ Reads a JSON result object from the first positional argument (as produced by
 `alerts.check --format json`) and publishes a notification to the configured
 SNS topic for each failed alert that has an `aws_sns_topic` set.
 
-The full topic ARN is constructed at runtime as:
-    arn:aws:sns:us-east-1:{account_id}:{topic_name}
-
 Exit codes:
     0  All notifications published successfully (or none needed).
     1  One or more SNS publish calls failed.
@@ -34,9 +31,12 @@ def build_topic_arn(account_id: str, topic_name: str) -> str:
 
 
 def publish_notification(
-    topic_arn: str, alert_name: str, message: str, client
+    topic_arn: str,
+    alert_name: str,
+    message: str,
+    client,  # boto3 SNS client
 ) -> None:
-    """Publish a failure notification to an SNS topic.
+    """Publish an alert notification to an SNS topic.
 
     Raises:
         ClientError, BotoCoreError: If the SNS publish call fails.
@@ -45,10 +45,15 @@ def publish_notification(
     client.publish(TopicArn=topic_arn, Subject=subject, Message=message)
 
 
-def notify_alerts(results: list[Result], account_id: str, client) -> int:
-    """Publish notifications for all failed alerts that have a topic configured.
+def notify_alerts(
+    results: list[Result],
+    account_id: str,
+    client,  # boto3 SNS client
+) -> int:
+    """Main entrypoint for the script logic. Publishes notifications for all
+    failed alerts that have a topic configured.
 
-    Returns 0 if all publishes succeeded, 1 if any failed.
+    Return codes: 0 = all publishes succeeded; non-zero = any publishes failed.
     """
     failed_notifications: list[str] = []
     for result in results:
@@ -64,23 +69,25 @@ def notify_alerts(results: list[Result], account_id: str, client) -> int:
             )
             continue
 
-        topic_arn = build_topic_arn(account_id, result.alert.aws_sns_topic)
+        topic_name = result.alert.aws_sns_topic
+        topic_arn = build_topic_arn(account_id, topic_name)
 
         try:
             publish_notification(
                 topic_arn, result.alert.name, result.status_message(), client
             )
-            print(f"Notified [{result.alert.name}] → {topic_arn}")
+            print(f"Notified [{result.alert.name}] → {topic_name}")
         except (ClientError, BotoCoreError) as exc:
             print(
-                f"ERROR: Failed to notify [{result.alert.name}] → {topic_arn}: {exc}"
+                f"ERROR: Failed to notify [{result.alert.name}] → {topic_name}: {exc}"
             )
             failed_notifications.append(result.alert.name)
 
     if failed_notifications:
+        print()
         print(
-            f"\n{len(failed_notifications)} notification(s) failed: "
-            + ", ".join(failed_notifications)
+            f"{len(failed_notifications)} notification(s) failed: "
+            f"{', '.join(failed_notifications)}"
         )
         return 1
 
