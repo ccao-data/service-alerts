@@ -1,6 +1,5 @@
 """Unit tests for alerts/check.py."""
 
-import dataclasses
 import json
 from datetime import datetime, timezone
 from pathlib import Path
@@ -10,7 +9,7 @@ import pytest_mock
 import yaml
 
 from alerts.check import check_alerts, evaluate_alert, main, query_cloudwatch
-from alerts.models import Alert, Result, ResultStatus
+from alerts.models import Alert, ResultContainer, ResultStatus
 from tests.conftest import make_alert, make_paginator, write_config
 
 UTC = timezone.utc
@@ -308,8 +307,8 @@ class TestCheckAlertsJsonFormat:
             output_format="json",
             now=_FIND_NOW,
         )
-        parsed = json.loads(capsys.readouterr().out)
-        assert parsed["any_failed"] is False
+        parsed = ResultContainer.from_dict(json.loads(capsys.readouterr().out))
+        assert parsed.any_failed is False
 
     def test_any_failed_true_when_alert_fails(
         self,
@@ -326,29 +325,8 @@ class TestCheckAlertsJsonFormat:
             output_format="json",
             now=_FIND_NOW,
         )
-        parsed = json.loads(capsys.readouterr().out)
-        assert parsed["any_failed"] is True
-
-    def test_results_contain_expected_fields(
-        self,
-        find_due_config: Path,
-        mocker: pytest_mock.MockerFixture,
-        capsys: pytest.CaptureFixture,
-    ):
-        mocker.patch(
-            "alerts.check.boto3.client",
-            return_value=make_paginator({"events": []}),
-        )
-        check_alerts(
-            config_files=[find_due_config],
-            output_format="json",
-            now=_FIND_NOW,
-        )
-        parsed = json.loads(capsys.readouterr().out)
-        result = parsed["results"][0]
-        assert set(result.keys()) == set(
-            field.name for field in dataclasses.fields(Result)
-        )
+        parsed = ResultContainer.from_dict(json.loads(capsys.readouterr().out))
+        assert parsed.any_failed is True
 
     def test_results_include_sns_topic(
         self,
@@ -368,8 +346,8 @@ class TestCheckAlertsJsonFormat:
             output_format="json",
             now=_FIND_NOW,
         )
-        parsed = json.loads(capsys.readouterr().out)
-        assert parsed["results"][0]["alert"]["aws_sns_topic"] == "my-topic"
+        parsed = ResultContainer.from_dict(json.loads(capsys.readouterr().out))
+        assert parsed.results[0].alert.aws_sns_topic == "my-topic"
 
     def test_exit_code_0_on_failure_with_json_format(
         self, find_due_config: Path, mocker: pytest_mock.MockerFixture
@@ -413,7 +391,6 @@ class TestMain:
         mocker: pytest_mock.MockerFixture,
         capsys: pytest.CaptureFixture,
     ):
-        """When no config files are passed, main() should glob the config dir"""
         mocker.patch("alerts.check.ALERT_CONFIG_DIR", tmp_path)
         mocker.patch("sys.argv", ["check", "--dry-run"])
         mocker.patch("alerts.check.datetime").now.return_value = _FIND_NOW
@@ -428,7 +405,6 @@ class TestMain:
         mocker: pytest_mock.MockerFixture,
         capsys: pytest.CaptureFixture,
     ):
-        """Fallback glob should pick up both .yml and .yaml files."""
         write_config(tmp_path / "svc.yaml", [alert])
         mocker.patch("alerts.check.ALERT_CONFIG_DIR", tmp_path)
         mocker.patch("sys.argv", ["check", "--dry-run"])
@@ -443,7 +419,6 @@ class TestMain:
         mocker: pytest_mock.MockerFixture,
         capsys: pytest.CaptureFixture,
     ):
-        """When no files are passed and CONFIG_DIR is empty, exit 1 with a message."""
         mocker.patch("alerts.check.ALERT_CONFIG_DIR", tmp_path)
         mocker.patch("sys.argv", ["check", "--dry-run"])
         with pytest.raises(ValueError, match="No config files"):
