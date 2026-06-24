@@ -22,9 +22,6 @@ jobs:
           enable-cache: true
           python-version: "3.14"
           cache-suffix: pytest
-          cache-dependency-glob: |
-            python/pyproject.toml
-            python/uv.lock
 
       - name: Run Python tests
         shell: bash
