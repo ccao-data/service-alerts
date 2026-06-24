@@ -168,6 +168,7 @@ class Alert:
         """Load, validate, and return a list of Alerts from a YAML config file.
 
         Raises:
+            FileNotFoundError: If the config file does not exist.
             ValueError: If any alert is missing required fields or has invalid values.
         """
 
@@ -175,6 +176,9 @@ class Alert:
             """Inner helper function to format error messages with a common
             prefix"""
             return f"{path}: {err}"
+
+        if not path.exists():
+            raise FileNotFoundError(format_error("Config file not found"))
 
         with path.open() as f:
             data = yaml.safe_load(f)

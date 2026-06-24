@@ -198,9 +198,9 @@ uv sync --extra dev
 # Run tests
 uv run pytest
 
-# Run checks for one config file
-uv run python -m alerts.check config/service-spark-iasworld.yml
+# Check all alerts
+uv run python -m alerts.check
 
-# Run the script on all .yml files in the config dir
-uv run python -m alerts.check config/*.yml
+# Check alerts in one config file
+uv run python -m alerts.check config/service-spark-iasworld.yml
 ```

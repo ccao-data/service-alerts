@@ -49,19 +49,6 @@ jobs:
           enable-cache: true
           python-version: "3.14"
 
-      - name: List config files
-        id: list-configs
-        shell: bash
-        run: |
-          # Configure bash to expand globs to null when they don't match
-          # anything, rather than remain unexpanded. This allows us to
-          # match on both .yml and .yaml file extensions, extracting the
-          # output to an array while excluding any globs that don't match
-          # anything
-          shopt -s nullglob
-          config_files=(config/*.yml config/*.yaml)
-          echo "config_files=${config_files[*]}" >> "$GITHUB_OUTPUT"
-
       - name: Find due alerts
         id: find-due
         shell: bash
@@ -69,7 +56,7 @@ jobs:
           # In case of an error in the command that runs in the `due` command
           # substitution, exit with the status code of that command. This is
           # necessary since command substitution suppresses errors by default
-          due=$(uv run python -m alerts.check ${{ steps.list-configs.outputs.config_files }} --dry-run) || exit $?
+          due=$(uv run python -m alerts.check --dry-run) || exit $?
           if [[ -n "$due" ]]; then
             echo "Alerts due:"
             echo "$due"
@@ -97,7 +84,7 @@ jobs:
         id: run-checks
         shell: bash
         run: |
-          results=$(uv run python -m alerts.check ${{ steps.list-configs.outputs.config_files }} --format json) || exit $?
+          results=$(uv run python -m alerts.check --format json) || exit $?
           echo "Results:"
           echo "$results"
           echo "results=$results" >> "$GITHUB_OUTPUT"

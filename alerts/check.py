@@ -1,8 +1,14 @@
 """Check CloudWatch Logs for alerts defined in YAML config files.
 
 Usage:
+    # Check all YAML files in the default `config/` subdir
+    python -m alerts.check
+    # Check only files with the `.yml` extension in the `config/` subdir
     python -m alerts.check config/*.yml
-    python -m alerts.check config/*.yml --format json
+    # Print the names of alerts that are due, and exit without checking them
+    python -m alerts.check --dry-run
+    # Run checks on all alerts in the default subdir and print output as JSON
+    python -m alerts.check --format json
 
 For each alert in each config file, checks whether the alert's cron schedule
 fired within the past hour. If so, queries CloudWatch Logs and evaluates the
@@ -14,8 +20,14 @@ Exit codes:
     1  Script error (e.g. bad config, AWS authentication failure).
 
 With --format json, outputs a JSON object to stdout with keys `any_failed`
-(bool) and `results` (list of per-alert outcomes). The workflow reads
-`any_failed` to decide whether to notify and whether to fail the job.
+(bool) and `results` (list of per-alert outcomes). The workflow that runs
+this script reads from the `any_failed` key in the JSON output to decide
+whether to notify and whether to fail the job.
+
+With --dry-run, only checks to see which alerts are due for checking, prints
+their human-readable names, and then exits. A dry run will print no output if
+no alerts are due. The workflow that runs this script uses this option to skip
+AWS authentication if no alerts are due for checking.
 """
 
 import argparse
@@ -27,7 +39,7 @@ from typing import Literal
 
 import boto3
 
-from alerts.constants import AWS_REGION
+from alerts.constants import ALERT_CONFIG_DIR, AWS_REGION
 from alerts.models import (
     Alert,
     Result,
@@ -42,7 +54,7 @@ def query_cloudwatch(
     log_query: str,
     lookback_hours: int,
     now: datetime,
-    client,
+    client,  # boto3 CloudWatch Logs client
 ) -> bool:
     """Return True if any log events match log_query in the lookback window."""
     start_ms = int((now.timestamp() - lookback_hours * 3600) * 1000)
@@ -61,7 +73,11 @@ def query_cloudwatch(
     return False
 
 
-def evaluate_alert(alert: Alert, now: datetime, client) -> Result:
+def evaluate_alert(
+    alert: Alert,
+    now: datetime,
+    client,  # boto3 CloudWatch Logs client
+) -> Result:
     """Evaluate a single Alert at a given time `now`, returning a Result object
     containing the alert status and message."""
     found_match = query_cloudwatch(
@@ -97,7 +113,7 @@ def check_alerts(
     The `now` parameter is provided as a helper for unit tests, to allow them
     to control the time that the check runs without mocking.
 
-    Exit codes: 0 = ran to completion; non-zero = script error only.
+    Return codes: 0 = ran to completion; non-zero = script error.
     """
     if now is None:
         now = datetime.now(tz=timezone.utc)
@@ -123,13 +139,13 @@ def check_alerts(
             f"Checking {len(due_alerts)} alert(s) due at "
             f"{now.strftime('%Y-%m-%d %H:%M UTC')}..."
         )
+        print()
 
     results: list[Result] = []
     for alert in due_alerts:
         result = evaluate_alert(alert, now, client)
         results.append(result)
         if output_format == "text":
-            print()
             print(result.status_message())
 
     failures = [
@@ -157,10 +173,13 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Check CloudWatch log alerts")
     parser.add_argument(
         "config_files",
-        nargs="+",
+        nargs="*",
         type=Path,
         metavar="CONFIG",
-        help="One or more alert YAML config files",
+        help=(
+            "One or more alert YAML config files. "
+            "Defaults to all .yml/.yaml files in config/ if not provided."
+        ),
     )
     parser.add_argument(
         "--dry-run",
@@ -180,7 +199,18 @@ def main() -> int:
     )
     args = parser.parse_args()
 
-    return check_alerts(args.config_files, args.dry_run, args.output_format)
+    config_files = args.config_files or sorted(
+        [
+            *ALERT_CONFIG_DIR.glob("*.yml"),
+            *ALERT_CONFIG_DIR.glob("*.yaml"),
+        ]
+    )
+    if not config_files:
+        raise ValueError(
+            "No config files found in config/ and none were provided",
+        )
+
+    return check_alerts(config_files, args.dry_run, args.output_format)
 
 
 if __name__ == "__main__":

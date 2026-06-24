@@ -9,15 +9,14 @@ import pytest
 import pytest_mock
 import yaml
 
-from alerts.check import check_alerts, evaluate_alert, query_cloudwatch
-from alerts.models import Result, ResultStatus
-from tests.conftest import make_alert, make_paginator
+from alerts.check import check_alerts, evaluate_alert, main, query_cloudwatch
+from alerts.models import Alert, Result, ResultStatus
+from tests.conftest import make_alert, make_paginator, write_config
 
 UTC = timezone.utc
 
 _NOW = datetime(2026, 6, 16, 12, 0, tzinfo=UTC)
 _FIND_NOW = datetime(2026, 6, 16, 12, 30, tzinfo=UTC)
-_EVAL_NOW = datetime(2026, 6, 16, 12, 0, tzinfo=UTC)
 
 
 # ---------------------------------------------------------------------------
@@ -106,7 +105,7 @@ class TestEvaluateAlert:
         alert = make_alert(fail_if=fail_if)
         events = [{"message": "hit"}] if found else []
         client = make_paginator({"events": events})
-        result = evaluate_alert(alert, _EVAL_NOW, client)
+        result = evaluate_alert(alert, _NOW, client)
         assert result.alert == alert
         assert result.status == expected_status
 
@@ -398,3 +397,54 @@ class TestCheckAlertsJsonFormat:
         parsed = json.loads(capsys.readouterr().out)
         assert exit_code == 0
         assert parsed == {"any_failed": False, "results": []}
+
+
+# ---------------------------------------------------------------------------
+# Test main()
+# ---------------------------------------------------------------------------
+
+
+class TestMain:
+    def test_falls_back_to_config_dir_when_no_files_given(
+        self,
+        tmp_path: Path,
+        alert: Alert,
+        alert_config: Path,
+        mocker: pytest_mock.MockerFixture,
+        capsys: pytest.CaptureFixture,
+    ):
+        """When no config files are passed, main() should glob the config dir"""
+        mocker.patch("alerts.check.ALERT_CONFIG_DIR", tmp_path)
+        mocker.patch("sys.argv", ["check", "--dry-run"])
+        mocker.patch("alerts.check.datetime").now.return_value = _FIND_NOW
+        exit_code = main()
+        assert exit_code == 0
+        assert alert.name in capsys.readouterr().out
+
+    def test_fallback_glob_picks_up_yaml_extension(
+        self,
+        tmp_path: Path,
+        alert: Alert,
+        mocker: pytest_mock.MockerFixture,
+        capsys: pytest.CaptureFixture,
+    ):
+        """Fallback glob should pick up both .yml and .yaml files."""
+        write_config(tmp_path / "svc.yaml", [alert])
+        mocker.patch("alerts.check.ALERT_CONFIG_DIR", tmp_path)
+        mocker.patch("sys.argv", ["check", "--dry-run"])
+        mocker.patch("alerts.check.datetime").now.return_value = _FIND_NOW
+        exit_code = main()
+        assert exit_code == 0
+        assert alert.name in capsys.readouterr().out
+
+    def test_raises_when_no_config_files_found(
+        self,
+        tmp_path: Path,
+        mocker: pytest_mock.MockerFixture,
+        capsys: pytest.CaptureFixture,
+    ):
+        """When no files are passed and CONFIG_DIR is empty, exit 1 with a message."""
+        mocker.patch("alerts.check.ALERT_CONFIG_DIR", tmp_path)
+        mocker.patch("sys.argv", ["check", "--dry-run"])
+        with pytest.raises(ValueError, match="No config files"):
+            main()

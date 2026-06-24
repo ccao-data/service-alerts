@@ -154,6 +154,11 @@ class TestAlertListFromFile:
                     alert, field.name
                 )
 
+    def test_raises_file_not_found_for_nonexistent_path(self, tmp_path: Path):
+        missing = tmp_path / "does_not_exist.yml"
+        with pytest.raises(FileNotFoundError):
+            Alert.list_from_file(missing)
+
     def test_raises_when_no_alerts_key(self, tmp_path: Path):
         config_file = tmp_path / "empty.yml"
         config_file.write_text(yaml.dump({}))

@@ -1,3 +1,5 @@
+from pathlib import Path
+
 # The workflow runs every CHECK_WINDOW_HOURS hours, and is_due() uses the same
 # window. When interval == window, the next workflow run sees any alert fire at
 # exactly `window` hours ago, which fails the strict `<` check and prevents
@@ -16,3 +18,6 @@ ALLOWED_SCHEDULE_HOURS = frozenset({0, 3, 6, 9, 12, 15, 18, 21})
 
 # AWS region to use for API calls
 AWS_REGION = "us-east-1"
+
+# Directory where we store alert config files
+ALERT_CONFIG_DIR = Path("config")
