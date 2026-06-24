@@ -4,6 +4,7 @@ import json
 from unittest.mock import MagicMock
 
 import pytest
+import pytest_mock
 from botocore.exceptions import ClientError
 
 from alerts.constants import AWS_REGION
@@ -160,12 +161,16 @@ class TestNotifyAlerts:
 
 
 class TestMain:
-    def test_main_raises_on_missing_results_json(self, mocker):
+    def test_main_raises_on_missing_results_json(
+        self, mocker: pytest_mock.MockerFixture
+    ):
         mocker.patch("sys.argv", ["notify", "--account-id", ACCOUNT_ID])
         with pytest.raises(SystemExit):
             main()
 
-    def test_main_raises_on_missing_account_id(self, mocker):
+    def test_main_raises_on_missing_account_id(
+        self, mocker: pytest_mock.MockerFixture
+    ):
         mocker.patch(
             "sys.argv",
             ["notify", '{"any_failed": false, "results": []}'],
@@ -173,7 +178,9 @@ class TestMain:
         with pytest.raises(SystemExit):
             main()
 
-    def test_main_raises_on_malformed_results_json(self, mocker):
+    def test_main_raises_on_malformed_results_json(
+        self, mocker: pytest_mock.MockerFixture
+    ):
         mocker.patch(
             "sys.argv",
             ["notify", "not-valid-json", "--account-id", ACCOUNT_ID],
@@ -181,13 +188,8 @@ class TestMain:
         with pytest.raises(ValueError, match="Unable to parse JSON"):
             main()
 
-    def test_main_raises_on_empty_results_json(self, mocker):
-        mocker.patch("sys.argv", ["notify", "", "--account-id", ACCOUNT_ID])
-        with pytest.raises(ValueError, match="empty"):
-            main()
-
     def test_main_publishes_to_boto_sns_client_for_all_failing_alerts(
-        self, mocker, sns_client: MagicMock
+        self, mocker: pytest_mock.MockerFixture, sns_client: MagicMock
     ):
         results_json = json.dumps(
             {

@@ -200,28 +200,6 @@ class TestAlertListFromFile:
 
 
 class TestResult:
-    def test_as_dict_returns_correctly_populated_dictionary(
-        self, result: Result
-    ):
-        result_dict = result.as_dict()
-
-        for field in dataclasses.fields(Result):
-            # Skip checking inner `alert` field, because it is an object and
-            # so can't be compared directly. We'll check it separately below
-            if field.name != "alert":
-                # Serialize status for comparison
-                if field.name == "status":
-                    assert result_dict["status"] == result.status.name
-                else:
-                    assert result_dict[field.name] == getattr(
-                        result, field.name
-                    )
-
-        for field in dataclasses.fields(Alert):
-            assert result_dict["alert"][field.name] == getattr(
-                result.alert, field.name
-            )
-
     def test_status_message_when_pass(self):
         result = make_result(status=ResultStatus.PASS, name="Test alert")
         assert result.status_message() == "PASS [Test alert]"
@@ -259,6 +237,28 @@ class TestResult:
 
         if fail_if == "match":
             assert "Logs matching" in message
+
+    def test_as_dict_returns_correctly_populated_dictionary(
+        self, result: Result
+    ):
+        result_dict = result.as_dict()
+
+        for field in dataclasses.fields(Result):
+            # Skip checking inner `alert` field, because it is an object and
+            # so can't be compared directly. We'll check it separately below
+            if field.name != "alert":
+                # Serialize status for comparison
+                if field.name == "status":
+                    assert result_dict["status"] == result.status.name
+                else:
+                    assert result_dict[field.name] == getattr(
+                        result, field.name
+                    )
+
+        for field in dataclasses.fields(Alert):
+            assert result_dict["alert"][field.name] == getattr(
+                result.alert, field.name
+            )
 
     def test_from_dict_returns_correctly_populated_object(
         self, result: Result
@@ -487,6 +487,11 @@ class TestValidateSchedule:
         # Due: prev fire within the past 3 hours
         (
             "0 12 * * *",
+            datetime(2026, 6, 16, 12, 1, tzinfo=UTC),
+            True,
+        ),  # 1 min ago
+        (
+            "0 12 * * *",
             datetime(2026, 6, 16, 12, 30, tzinfo=UTC),
             True,
         ),  # 30 min ago
@@ -506,6 +511,11 @@ class TestValidateSchedule:
             True,
         ),  # 2h30m ago — within 3h window
         # Not due: prev fire 3 hours or more ago
+        (
+            "0 12 * * *",
+            datetime(2026, 6, 16, 12, 0, tzinfo=UTC),
+            False,
+        ),  # 0 min ago - strict > means boundary is not due
         (
             "0 12 * * *",
             datetime(2026, 6, 16, 15, 30, tzinfo=UTC),

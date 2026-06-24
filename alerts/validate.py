@@ -26,7 +26,7 @@ def validate_configs(paths: list[Path]) -> int:
             all_alerts += alerts
             print(f"OK ({len(alerts)} alert(s)): {path}")
         except (ValueError, FileNotFoundError, Exception) as exc:
-            print(f"FAIL [{str(path)}]: {exc}")
+            print(f"FAIL: {exc}")
             failed.append(str(path))
 
     # Make sure alert IDs are globally unique

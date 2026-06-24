@@ -8,6 +8,7 @@ import yaml
 from alerts.models import Alert
 from alerts.validate import validate_configs
 from tests.conftest import (
+    make_alert,
     write_config,
     write_raw_config,
 )
@@ -30,6 +31,25 @@ class TestValidateConfigs:
     ):
         validate_configs([two_alert_config])
         assert "2 alert(s)" in capsys.readouterr().out
+
+    def test_valid_config_prints_path(
+        self, alert_config: Path, capsys: pytest.CaptureFixture
+    ):
+        validate_configs([alert_config])
+        assert str(alert_config) in capsys.readouterr().out
+
+    def test_multiple_valid_configs_all_pass(
+        self,
+        two_alerts: tuple[Alert, Alert],
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture,
+    ):
+        config_a = write_config(tmp_path / "a.yml", [two_alerts[0]])
+        config_b = write_config(tmp_path / "b.yml", [two_alerts[1]])
+        assert validate_configs([config_a, config_b]) == 0
+        out = capsys.readouterr().out
+        assert str(config_a) in out
+        assert str(config_b) in out
 
     def test_missing_required_field_fails(
         self, alert: Alert, tmp_path: Path, capsys: pytest.CaptureFixture
@@ -65,13 +85,6 @@ class TestValidateConfigs:
         assert exit_code == 1
         assert "FAIL" in capsys.readouterr().out
 
-    def test_multiple_valid_configs_all_pass(
-        self, two_alerts: tuple[Alert, Alert], tmp_path: Path
-    ):
-        config_a = write_config(tmp_path / "a.yml", [two_alerts[0]])
-        config_b = write_config(tmp_path / "b.yml", [two_alerts[1]])
-        assert validate_configs([config_a, config_b]) == 0
-
     def test_one_failing_config_returns_1(
         self, alert: Alert, tmp_path: Path, capsys: pytest.CaptureFixture
     ):
@@ -94,6 +107,14 @@ class TestValidateConfigs:
         assert "OK" in out
         assert "FAIL" in out
 
+    def test_invalid_config_prints_path(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture
+    ):
+        config_file = tmp_path / "empty.yml"
+        config_file.write_text(yaml.dump({}))
+        validate_configs([config_file])
+        assert str(config_file) in capsys.readouterr().out
+
     def test_failure_summary_printed(
         self, tmp_path: Path, capsys: pytest.CaptureFixture
     ):
@@ -102,3 +123,18 @@ class TestValidateConfigs:
         )
         validate_configs([invalid])
         assert "failed validation" in capsys.readouterr().out
+
+    def test_duplicate_alert_id_returns_1(
+        self,
+        alert: Alert,
+        alert_config: Path,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture,
+    ):
+        dupe_alert = make_alert(id=alert.id)
+        dupe_config = write_config(tmp_path / "dupe.yml", [dupe_alert])
+        exit_code = validate_configs([alert_config, dupe_config])
+        out = capsys.readouterr().out
+        assert exit_code == 1
+        assert "duplicate" in out
+        assert alert.id in out

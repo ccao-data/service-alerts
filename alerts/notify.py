@@ -115,13 +115,7 @@ def main() -> int:
     try:
         results_dict = json.loads(args.results_json)
     except json.decoder.JSONDecodeError:
-        if args.results_json:
-            raise ValueError(f"Unable to parse JSON: {args.results_json}")
-        else:
-            raise ValueError(
-                "Expected to read JSON results from first positional arg, "
-                "but it is empty"
-            )
+        raise ValueError(f"Unable to parse JSON: {args.results_json!r}")
 
     result_container = ResultContainer.from_dict(results_dict)
     client = boto3.client("sns", region_name=AWS_REGION)
