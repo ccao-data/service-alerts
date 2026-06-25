@@ -127,7 +127,11 @@ def check_alerts(
 
     if not due_alerts:
         if output_format == "json":
-            print(json.dumps({"any_failed": False, "results": []}))
+            print(
+                json.dumps(
+                    ResultContainer(any_failed=False, results=[]).as_dict()
+                )
+            )
         else:
             print(f"No alerts due at {now.strftime('%Y-%m-%d %H:%M UTC')}.")
         return 0
