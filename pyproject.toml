@@ -1,0 +1,43 @@
+[build-system]
+# Support editable installations
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "alerts"
+version = "0.1.0"
+description = "Workflow and config files for checking that scheduled jobs are running as expected"
+requires-python = ">=3.11"
+dependencies = [
+    "boto3>=1.43",
+    "croniter>=6.2",
+    "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=9.1",
+    "pytest-mock>=3.15",
+    "ruff>=0.15",
+]
+
+[tool.setuptools.packages.find]
+include = ["alerts*"]
+
+[tool.pytest.ini_options]
+# Make sure pytest knows where our modules and our tests live
+pythonpath = ["."]
+testpaths = ["tests"]
+# Print verbose output
+addopts = "-v"
+
+[tool.ty.environment]
+# Make sure ty knows where our modules live
+extra-paths = ["."]
+
+[tool.ruff]
+line-length = 79
+
+[tool.ruff.lint]
+# Extend ruff to check import sort order
+extend-select = ["I"]
