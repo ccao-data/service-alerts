@@ -1,28 +1,52 @@
 alerts:
-  - id: service-spark-iasworld-not-run
-    name: "Spark ingest not run"
-    log_group: /ccao/jobs/spark
-    log_query: "?info ?Info ?INFO"
-    fail_if: "no_match"
-    schedule: "0 12 * * *"
-    lookback_hours: 12
-    aws_sns_topic: ccao-cloudwatch-alarm
-    failure_message: >-
-      The nightly ingest job that imports data from iasWorld into the
-      CCAO Data team's Athena data lake did not run as expected. Athena data
-      may be out of date or missing. See the Spark console for details:
+  - id: service-spark-iasworld-not-run-nightly
+    name: "Nightly iasWorld ingest did not run"
+    log_group: &log-group /ccao/jobs/spark
+    log_query: &log-query-not-run "?info ?Info ?INFO"
+    fail_if: &fail-if-not-run "no_match"
+    # Nightly job runs at 9am UTC every day except Saturday. It usually
+    # completes in <1hr, so we should be safe to check it at noon UTC
+    schedule: &schedule-nightly "0 12 * * 0-5"
+    lookback_hours: &lookback-hours 12
+    aws_sns_topic: &aws-sns-topic ccao-cloudwatch-alarm
+    failure_message: &failure-message-not-run >-
+      The job that imports data from iasWorld into the CCAO Data team's Athena
+      data lake did not run as expected today. Athena data may be out of date or
+      missing. See the Spark console for details:
       http://datascience.cookcountyassessor.com:8080/
 
-  - id: service-spark-iasworld-error
-    name: "Spark ingest error"
-    log_group: /ccao/jobs/spark
-    log_query: "?error ?Error ?ERROR ?exception ?Exception ?EXCEPTION"
-    fail_if: "match"
-    schedule: "0 12 * * *"
-    lookback_hours: 12
-    aws_sns_topic: ccao-cloudwatch-alarm
-    failure_message: >-
-      The nightly ingest job that imports data from iasWorld into the
-      CCAO Data team's Athena data lake encountered an unexpected error. Athena
-      data may be out of date or missing. See the CloudWatch logs for details:
+  - id: service-spark-iasworld-not-run-weekend
+    name: "Weekend iasWorld ingest did not run"
+    log_group: *log-group
+    log_query: *log-query-not-run
+    fail_if: *fail-if-not-run
+    # Weekend job runs at 9am UTC every Saturday. It usually completes in <4hr,
+    # so we should be safe to check it at 3pm UTC
+    schedule: &schedule-weekend "0 15 * * 6"
+    lookback_hours: *lookback-hours
+    aws_sns_topic: *aws-sns-topic
+    failure_message: *failure-message-not-run
+
+  - id: service-spark-iasworld-error-nightly
+    name: "Nightly iasWorld ingest encountered an error"
+    log_group: *log-group
+    log_query: &log-query-error "?error ?Error ?ERROR ?exception ?Exception ?EXCEPTION"
+    fail_if: &fail-if-error "match"
+    schedule: *schedule-nightly
+    lookback_hours: *lookback-hours
+    aws_sns_topic: *aws-sns-topic
+    failure_message: &failure-message-error >-
+      The job that imports data from iasWorld into the CCAO Data team's Athena
+      data lake encountered an unexpected error today. Athena data may be out of
+      date or missing. See the CloudWatch logs for details:
       https://us-east-1.console.aws.amazon.com/cloudwatch/home?region=us-east-1#logsV2:log-groups/log-group/$252Fccao$252Fjobs$252Fspark
+
+  - id: service-spark-iasworld-error-weekend
+    name: "Weekend iasWorld ingest encountered an error"
+    log_group: *log-group
+    log_query: *log-query-error
+    fail_if: *fail-if-error
+    schedule: *schedule-weekend
+    lookback_hours: *lookback-hours
+    aws_sns_topic: *aws-sns-topic
+    failure_message: *failure-message-error
