@@ -8,7 +8,7 @@ alerts:
     lookback_hours: 12
     aws_sns_topic: ccao-ic-vm-job-alarm
     failure_message: >-
-      The nightly writing of the appeal workbooks did not run.
+      The daily writing of the appeal workbooks did not run.
       See the CloudWatch logs for details:
       https://us-east-1.console.aws.amazon.com/cloudwatch/home?region=us-east-1#logsV2:log-groups/log-group/$252Fccao$252Fjobs$252Fappeal_workbooks
 
@@ -21,6 +21,6 @@ alerts:
     lookback_hours: 12
     aws_sns_topic: ccao-ic-vm-job-alarm
     failure_message: >-
-      The nightly writing of the appeal workbooks encountered an unexpected
+      The daily writing of the appeal workbooks encountered an unexpected
       error. See the CloudWatch logs for details:
       https://us-east-1.console.aws.amazon.com/cloudwatch/home?region=us-east-1#logsV2:log-groups/log-group/$252Fccao$252Fjobs$252Fappeal_workbooks
