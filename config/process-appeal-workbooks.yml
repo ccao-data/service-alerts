@@ -12,7 +12,7 @@ alerts:
       See the CloudWatch logs for details:
       https://us-east-1.console.aws.amazon.com/cloudwatch/home?region=us-east-1#logsV2:log-groups/log-group/$252Fccao$252Fjobs$252Fappeal_workbooks
 
-  - id: service-appeal-workbooks-error
+  - id: process-appeal-workbooks-error
     name: "Appeal Workbooks error"
     log_group: /ccao/jobs/appeal_workbooks
     log_query: "?error ?Error ?ERROR ?exception ?Exception ?EXCEPTION ?FAIL"
