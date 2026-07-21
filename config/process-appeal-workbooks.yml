@@ -4,7 +4,7 @@ alerts:
     log_group: /ccao/jobs/appeal_workbooks
     log_query: "?total ?Total ?TOTAL"
     fail_if: "no_match"
-    schedule: "0 12 * * 1-5"
+    schedule: "0 15 * * 1-5"
     lookback_hours: 12
     aws_sns_topic: ccao-ic-vm-job-alarm
     failure_message: >-
@@ -17,7 +17,7 @@ alerts:
     log_group: /ccao/jobs/appeal_workbooks
     log_query: "?error ?Error ?ERROR ?exception ?Exception ?EXCEPTION ?FAIL"
     fail_if: "match"
-    schedule: "0 12 * * 1-5"
+    schedule: "0 15 * * 1-5"
     lookback_hours: 12
     aws_sns_topic: ccao-ic-vm-job-alarm
     failure_message: >-
