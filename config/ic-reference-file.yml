@@ -22,7 +22,7 @@ alerts:
     lookback_hours: 12
     aws_sns_topic: ccao-ic-vm-job-alarm
     failure_message: >-
-      The job that exports the IC reference file encountered an unexpected
-      error. The IC reference file may be out of date or missing. See the
+      The daily job that exports IC reference files encountered an unexpected
+      error. IC reference files may be out of date or missing. See the
       CloudWatch logs for details:
       https://us-east-1.console.aws.amazon.com/cloudwatch/home?region=us-east-1#logsV2:log-groups/log-group/$252Fccao$252Fjobs$252Fic_reference_file_export
