@@ -1,0 +1,28 @@
+alerts:
+  - id: ic-reference-file-not-run
+    name: "IC reference file export not run"
+    log_group: /ccao/jobs/ic_reference_file_export
+    log_query: "?info ?Info ?INFO"
+    fail_if: "no_match"
+    schedule: "0 12 * * *"
+    lookback_hours: 12
+    aws_sns_topic: ccao-ic-vm-job-alarm
+    failure_message: >-
+      The daily job that exports IC reference files did not run as expected.
+      IC reference files may be out of date or missing. See the CloudWatch
+      logs for details:
+      https://us-east-1.console.aws.amazon.com/cloudwatch/home?region=us-east-1#logsV2:log-groups/log-group/$252Fccao$252Fjobs$252Fic_reference_file_export
+
+  - id: ic-reference-file-error
+    name: "IC reference file export error"
+    log_group: /ccao/jobs/ic_reference_file_export
+    log_query: "?error ?Error ?ERROR ?exception ?Exception ?EXCEPTION ?FAIL"
+    fail_if: "match"
+    schedule: "0 12 * * *"
+    lookback_hours: 12
+    aws_sns_topic: ccao-ic-vm-job-alarm
+    failure_message: >-
+      The daily job that exports IC reference files encountered an unexpected
+      error. IC reference files may be out of date or missing. See the
+      CloudWatch logs for details:
+      https://us-east-1.console.aws.amazon.com/cloudwatch/home?region=us-east-1#logsV2:log-groups/log-group/$252Fccao$252Fjobs$252Fic_reference_file_export
