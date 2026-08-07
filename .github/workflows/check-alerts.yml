@@ -86,7 +86,10 @@ jobs:
         run: |
           results=$(uv run python -m alerts.check --format json) || exit $?
           echo "Results:"
-          echo "$results"
+          echo "$results" | jq -r '.results[] | "\(.status)\t\(.alert.id)"'
+          echo "::group::Raw results"
+          echo "$results" | jq .
+          echo "::endgroup::"
           echo "results=$results" >> "$GITHUB_OUTPUT"
           echo "check_failed=$(echo "$results" | jq -r '.any_failed')" >> "$GITHUB_OUTPUT"
 
