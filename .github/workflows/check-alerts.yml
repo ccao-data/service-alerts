@@ -3,7 +3,7 @@ name: check-alerts
 on:
   schedule:
     # Run every 3 hours (midnight, 3am, 6am, 9am, noon, 3pm, 6pm, 9pm UTC).
-    # This window is deliberately wide because we have observed scheduled
+    # sThis window is deliberately wide because we have observed scheduled
     # workflows running up to 2 hours later than their scheduled time.
     # See README.md for details.
     #
