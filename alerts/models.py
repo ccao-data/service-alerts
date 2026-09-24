@@ -15,7 +15,7 @@ Key models:
 
 import dataclasses
 import enum
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Literal, Protocol, Type
 
@@ -60,7 +60,15 @@ class Alert:
         schedule: 5-field UTC cron expression for when this alert should be
             evaluated. Checked against the past hour each time the workflow runs.
         lookback_hours: How far back (in hours) to search for matching log events.
-            Must be a positive integer.
+            Must be a positive integer. Mutually exclusive with `job_schedule`
+            and `max_duration_minutes`.
+        job_schedule: 5-field UTC cron expression for when the monitored job
+            starts. When set along with `max_duration_minutes`, the alert
+            searches from the most recent job start to the job's deadline
+            instead of using `lookback_hours`.
+        max_duration_minutes: Number of minutes after the job start to search
+            for matching log events. Must be a positive integer. Required when
+            `job_schedule` is set.
         aws_sns_topic: Optional SNS topic name to notify when this alert fails.
             The full ARN is constructed at runtime; only the topic name is stored
             here to avoid embedding the AWS account ID in config files.
@@ -79,7 +87,9 @@ class Alert:
     log_query: str
     fail_if: Literal["match", "no_match"]
     schedule: str
-    lookback_hours: int
+    lookback_hours: int | None = None
+    job_schedule: str | None = None
+    max_duration_minutes: int | None = None
     aws_sns_topic: str | None = None
     failure_message: str | None = None
     source_file: str | None = None
@@ -103,17 +113,38 @@ class Alert:
                 f"name '{self.name}' is invald, must be < 100 characters"
             )
 
-        if self.lookback_hours <= 0:
-            raise ValueError(
-                "lookback_hours must be a positive integer, "
-                f"got {self.lookback_hours!r}"
-            )
-
         valid_fail_if = frozenset({"match", "no_match"})
         if self.fail_if not in valid_fail_if:
             raise ValueError(
                 f"invalid fail_if value '{self.fail_if}', must be one of: "
                 f"{valid_fail_if}"
+            )
+
+        # Alerts define their search window either by looking back from the
+        # check time, or by the monitored job's start time and max duration
+        if (self.job_schedule is None) != (self.max_duration_minutes is None):
+            raise ValueError(
+                "job_schedule and max_duration_minutes must be set together"
+            )
+        if (self.lookback_hours is None) == (self.job_schedule is None):
+            raise ValueError(
+                "exactly one of lookback_hours or "
+                "job_schedule/max_duration_minutes must be set"
+            )
+
+        for positive_int_field in ["lookback_hours", "max_duration_minutes"]:
+            value = getattr(self, positive_int_field)
+            if value is not None and value <= 0:
+                raise ValueError(
+                    f"{positive_int_field} must be a positive integer, "
+                    f"got {value!r}"
+                )
+
+        if self.job_schedule is not None and not croniter.is_valid(
+            self.job_schedule
+        ):
+            raise ValueError(
+                f"Invalid job_schedule cron expression: {self.job_schedule!r}"
             )
 
         # Make sure important optional fields are not empty strings
@@ -130,6 +161,43 @@ class Alert:
         valid_schedule, reason = validate_schedule(self.schedule)
         if not valid_schedule:
             raise ValueError(reason)
+
+    def query_window(self, now: datetime) -> tuple[datetime, datetime]:
+        """Return the (start, end) time range to search for log events when
+        the alert is checked at `now`."""
+        if (
+            self.job_schedule is not None
+            and self.max_duration_minutes is not None
+        ):
+            # Search from the most recent job start up to the job's deadline.
+            # Anchor to the alert's scheduled check time rather than `now` so
+            # that delayed workflow runs search the same window as on-time
+            # runs. croniter's get_prev() excludes its start time, so nudge
+            # `now` forward to include runs that start exactly on schedule
+            check_time = croniter(
+                self.schedule, now + timedelta(seconds=1)
+            ).get_prev(datetime)
+            job_start = croniter(self.job_schedule, check_time).get_prev(
+                datetime
+            )
+            return (
+                job_start,
+                job_start + timedelta(minutes=self.max_duration_minutes),
+            )
+
+        if self.lookback_hours is not None:
+            return now - timedelta(hours=self.lookback_hours), now
+
+        # It should not be possible to reach this point since we validate
+        # window fields when initializing Alert objects, but raise an error so
+        # that we fail loudly if somehow the code breaks that assumption
+        raise ValueError(f"Alert '{self.id}' has no query window configured")
+
+    def query_window_description(self) -> str:
+        """Return a description of the alert's query window."""
+        if self.job_schedule is not None:
+            return f"within {self.max_duration_minutes}m of the job start"
+        return f"in the past {self.lookback_hours}h"
 
     def as_dict(self) -> dict[str, Any]:
         """Serialize an Alert object as a dictionary."""
@@ -156,7 +224,9 @@ class Alert:
             log_query=dct["log_query"],
             fail_if=dct["fail_if"],
             schedule=dct["schedule"],
-            lookback_hours=dct["lookback_hours"],
+            lookback_hours=dct.get("lookback_hours"),
+            job_schedule=dct.get("job_schedule"),
+            max_duration_minutes=dct.get("max_duration_minutes"),
             source_file=dct.get("source_file"),
             aws_sns_topic=dct.get("aws_sns_topic"),
             failure_message=dct.get("failure_message"),
@@ -235,15 +305,16 @@ class Result:
 
             # If no customized failure message is set, fall back to a simple
             # default based on the type of check
+            window = self.alert.query_window_description()
             if self.alert.fail_if == "match":
                 return (
                     f"{common_prefix}: Logs matching '{self.alert.log_query}' found in "
-                    f"'{self.alert.log_group}' in the past {self.alert.lookback_hours}h"
+                    f"'{self.alert.log_group}' {window}"
                 )
             if self.alert.fail_if == "no_match":
                 return (
                     f"{common_prefix}: No logs matching '{self.alert.log_query}' found in "
-                    f"'{self.alert.log_group}' in the past {self.alert.lookback_hours}h"
+                    f"'{self.alert.log_group}' {window}"
                 )
             else:
                 # It should not be possible to reach this conditional branch

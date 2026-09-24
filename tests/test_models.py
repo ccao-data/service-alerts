@@ -1,7 +1,7 @@
 """Unit tests for alerts/models.py."""
 
 import dataclasses
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -67,6 +67,77 @@ class TestAlert:
             ValueError, match="lookback_hours must be a positive integer"
         ):
             make_alert(lookback_hours=lookback_hours)
+
+    @pytest.mark.parametrize("max_duration_minutes", [0, -1, -100])
+    def test_init_nonpositive_max_duration_minutes_raises(
+        self, max_duration_minutes: int
+    ):
+        with pytest.raises(
+            ValueError, match="max_duration_minutes must be a positive integer"
+        ):
+            make_alert(
+                lookback_hours=None,
+                job_schedule="0 9 * * *",
+                max_duration_minutes=max_duration_minutes,
+            )
+
+    @pytest.mark.parametrize(
+        "window_fields",
+        [
+            {"job_schedule": "0 9 * * *"},
+            {"max_duration_minutes": 90},
+            {"lookback_hours": None, "job_schedule": "0 9 * * *"},
+            {"lookback_hours": None, "max_duration_minutes": 90},
+        ],
+    )
+    def test_init_partial_job_window_raises(self, window_fields: dict):
+        with pytest.raises(ValueError, match="must be set together"):
+            make_alert(**window_fields)
+
+    @pytest.mark.parametrize(
+        "window_fields",
+        [
+            {"lookback_hours": None},
+            {"job_schedule": "0 9 * * *", "max_duration_minutes": 90},
+        ],
+    )
+    def test_init_not_exactly_one_window_raises(self, window_fields: dict):
+        with pytest.raises(ValueError, match="exactly one of lookback_hours"):
+            make_alert(**window_fields)
+
+    def test_init_invalid_job_schedule_raises(self):
+        with pytest.raises(ValueError, match="Invalid job_schedule"):
+            make_alert(
+                lookback_hours=None,
+                job_schedule="not a cron",
+                max_duration_minutes=90,
+            )
+
+    def test_query_window_lookback(self):
+        now = datetime(2026, 9, 24, 12, 5, tzinfo=timezone.utc)
+        alert = make_alert(lookback_hours=12)
+        assert alert.query_window(now) == (now - timedelta(hours=12), now)
+
+    @pytest.mark.parametrize(
+        "now",
+        [
+            # On-time and delayed workflow runs search the same window
+            datetime(2026, 9, 24, 12, 0, tzinfo=timezone.utc),
+            datetime(2026, 9, 24, 14, 59, tzinfo=timezone.utc),
+        ],
+    )
+    @pytest.mark.parametrize("fail_if", ["match", "no_match"])
+    def test_query_window_job_schedule(self, now: datetime, fail_if: str):
+        alert = make_alert(
+            fail_if=fail_if,
+            lookback_hours=None,
+            job_schedule="0 9 * * *",
+            max_duration_minutes=90,
+        )
+        assert alert.query_window(now) == (
+            datetime(2026, 9, 24, 9, 0, tzinfo=timezone.utc),
+            datetime(2026, 9, 24, 10, 30, tzinfo=timezone.utc),
+        )
 
     @pytest.mark.parametrize("fail_if", ["match", "no_match"])
     def test_init_valid_fail_if_values(self, fail_if: str):
@@ -221,6 +292,24 @@ class TestResult:
             ("match", {"log_group": "/my/group"}, "/my/group"),
             ("match", {"lookback_hours": 6}, "6"),
             ("match", {"log_query": "my_pattern"}, "my_pattern"),
+            (
+                "no_match",
+                {
+                    "lookback_hours": None,
+                    "job_schedule": "0 9 * * *",
+                    "max_duration_minutes": 90,
+                },
+                "within 90m of the job start",
+            ),
+            (
+                "match",
+                {
+                    "lookback_hours": None,
+                    "job_schedule": "0 9 * * *",
+                    "max_duration_minutes": 90,
+                },
+                "within 90m of the job start",
+            ),
         ],
     )
     def test_status_message_falls_back_to_default_error_message(
