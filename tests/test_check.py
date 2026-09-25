@@ -1,7 +1,7 @@
 """Unit tests for alerts/check.py."""
 
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -16,6 +16,7 @@ UTC = timezone.utc
 
 _NOW = datetime(2026, 6, 16, 12, 0, tzinfo=UTC)
 _FIND_NOW = datetime(2026, 6, 16, 12, 30, tzinfo=UTC)
+_START = _NOW - timedelta(hours=12)
 
 
 # ---------------------------------------------------------------------------
@@ -43,22 +44,20 @@ class TestQueryCloudWatch:
     def test_query_cloudwatch_match(self, pages: list, expected: bool):
         client = make_paginator(*pages)
         assert (
-            query_cloudwatch("/test/logs", "info", 12, _NOW, client)
+            query_cloudwatch("/test/logs", "info", _START, _NOW, client)
             is expected
         )
 
     def test_passes_correct_time_window(self):
         client = make_paginator({"events": []})
-        query_cloudwatch("/test/logs", "info", 12, _NOW, client)
+        query_cloudwatch("/test/logs", "info", _START, _NOW, client)
         _, kwargs = client.get_paginator.return_value.paginate.call_args
-        assert kwargs["startTime"] == int(
-            (_NOW.timestamp() - 12 * 3600) * 1000
-        )
+        assert kwargs["startTime"] == int(_START.timestamp() * 1000)
         assert kwargs["endTime"] == int(_NOW.timestamp() * 1000)
 
     def test_passes_correct_filter_pattern_and_log_group(self):
         client = make_paginator({"events": []})
-        query_cloudwatch("/test/logs", "my_pattern", 6, _NOW, client)
+        query_cloudwatch("/test/logs", "my_pattern", _START, _NOW, client)
         _, kwargs = client.get_paginator.return_value.paginate.call_args
         assert kwargs["filterPattern"] == "my_pattern"
         assert kwargs["logGroupName"] == "/test/logs"
@@ -107,6 +106,19 @@ class TestEvaluateAlert:
         result = evaluate_alert(alert, _NOW, client)
         assert result.alert == alert
         assert result.status == expected_status
+
+    def test_evaluate_alert_queries_alert_window(self):
+        alert = make_alert(
+            lookback_hours=None,
+            job_schedule="0 9 * * *",
+            max_duration_minutes=90,
+        )
+        client = make_paginator({"events": []})
+        evaluate_alert(alert, _NOW, client)
+        _, kwargs = client.get_paginator.return_value.paginate.call_args
+        start, end = alert.query_window(_NOW)
+        assert kwargs["startTime"] == int(start.timestamp() * 1000)
+        assert kwargs["endTime"] == int(end.timestamp() * 1000)
 
 
 # ---------------------------------------------------------------------------

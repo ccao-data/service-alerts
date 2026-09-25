@@ -43,7 +43,8 @@ it is "due".
 3. For each alert, the script determines whether the alert's `schedule` was due
    within the past 3 hours using [croniter](https://github.com/kiorky/croniter).
 4. If the alert is due, it queries the specified CloudWatch log group for
-   events matching `log_query` within the `lookback_hours` window.
+   events matching `log_query` within the alert's query window (see
+   [Choosing a query window](#choosing-a-query-window)).
 5. The result is evaluated against `fail_if`, a config value that determines
    the failure condition of the alert. All alerts run before the script exits,
    so that a single failure doesn't short-circuit the rest.
@@ -99,7 +100,7 @@ alerts:
     log_query: "info"            # Required. String to search for in log events.
     fail_if: "no_match"          # Required. "no_match" or "match" (see below).
     schedule: "0 12 * * 1-5"     # Required. Cron expression indicating when an alert should be checked.
-    lookback_hours: 12           # Required. How far back to search for logs.
+    lookback_hours: 12           # Required unless job_schedule is set. How far back to search for logs.
     aws_sns_topic: topic-name    # Optional. Name of the AWS SNS topic to notify on failure.
     failure_message: Job failed  # Optional. Custom error message to show in notifications.
 ```
@@ -114,7 +115,9 @@ alerts:
 | `log_query`       | string                    | Filter pattern passed to [`filter_log_events`](https://docs.aws.amazon.com/AmazonCloudWatchLogs/latest/APIReference/API_FilterLogEvents.html). Supports CloudWatch filter pattern syntax.                  |
 | `fail_if`         | `"no_match"` \| `"match"` | Alert failure condition. `"no_match"` means the alert fails if **no** events match (used to detect a job that hasn't run). `"match"` means an alert fails if **any** events match (used to detect errors). |
 | `schedule`        | string                    | Cron expression (5-field, UTC) for when the alert should be evaluated. See [scheduling constraints](#scheduling-constraints) below.                                                                        |
-| `lookback_hours`  | integer                   | Number of hours back from the check time to search for matching log events.                                                                                                                                |
+| `lookback_hours`  | integer                   | Number of hours back from the check time to search for matching log events. Mutually exclusive with `job_schedule`.                                                                                                                                |
+| `job_schedule`    | string                    | Cron expression (5-field, UTC) for when the monitored job starts. Must be set together with `max_duration_minutes`. See [Choosing a query window](#choosing-a-query-window).                              |
+| `max_duration_minutes` | integer              | Number of minutes after the most recent job start to search for matching log events. Must be set together with `job_schedule`.                                                                         |
 | `aws_sns_topic`   | string                    | Optional. Name of the AWS SNS topic to notify on failure. This should _not_ be an ARN, since ARNs contain our AWS account ID, which is not public.                                                         |
 | `failure_message` | string                    | Optional. Custom error message to show in notifications. When absent, the code will construct a simple error message fit for internal use.                                                                 |
 
@@ -124,6 +127,18 @@ alerts:
   matching log events are found (i.e. the job did not emit the expected logs).
 - Use `fail_if: "match"` to assert a job ran **without errors** — the alert
   fires if matching log events are found (i.e. errors are present in the logs).
+
+### Choosing a query window
+
+Each alert searches for log events in one of two kinds of window:
+
+- `lookback_hours`: Search the given number of hours back from the time the
+  alert is checked.
+- `job_schedule` and `max_duration_minutes`: Search from the most recent
+  scheduled start of the monitored job until `max_duration_minutes` after it.
+  Combined with `fail_if: "no_match"`, this asserts that a job **completed on
+  time**, since the alert fires if the job's completion log was not emitted
+  before its deadline.
 
 ### Scheduling constraints
 
