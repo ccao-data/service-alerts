@@ -138,8 +138,7 @@ Each alert searches for log events in one of two kinds of window:
   scheduled start of the monitored job until `max_duration_minutes` after it.
   Combined with `fail_if: "no_match"`, this asserts that a job **completed on
   time**, since the alert fires if the job's completion log was not emitted
-  before its deadline. The window is computed from the alert's scheduled check
-  time, so delayed workflow runs search the same window as on-time runs.
+  before its deadline.
 
 ### Scheduling constraints
 

@@ -132,11 +132,11 @@ class Alert:
                 "job_schedule/max_duration_minutes must be set"
             )
 
-        for positive_int_field in ["lookback_hours", "max_duration_minutes"]:
-            value = getattr(self, positive_int_field)
+        for duration_field in ["lookback_hours", "max_duration_minutes"]:
+            value = getattr(self, duration_field)
             if value is not None and value <= 0:
                 raise ValueError(
-                    f"{positive_int_field} must be a positive integer, "
+                    f"{duration_field} must be a positive integer, "
                     f"got {value!r}"
                 )
 
@@ -172,8 +172,7 @@ class Alert:
             # Search from the most recent job start up to the job's deadline.
             # Anchor to the alert's scheduled check time rather than `now` so
             # that delayed workflow runs search the same window as on-time
-            # runs. croniter's get_prev() excludes its start time, so nudge
-            # `now` forward to include runs that start exactly on schedule
+            # runs.
             check_time = croniter(
                 self.schedule, now + timedelta(seconds=1)
             ).get_prev(datetime)
@@ -188,9 +187,6 @@ class Alert:
         if self.lookback_hours is not None:
             return now - timedelta(hours=self.lookback_hours), now
 
-        # It should not be possible to reach this point since we validate
-        # window fields when initializing Alert objects, but raise an error so
-        # that we fail loudly if somehow the code breaks that assumption
         raise ValueError(f"Alert '{self.id}' has no query window configured")
 
     def query_window_description(self) -> str:
