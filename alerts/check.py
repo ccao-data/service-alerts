@@ -52,13 +52,13 @@ from alerts.models import (
 def query_cloudwatch(
     log_group: str,
     log_query: str,
-    lookback_hours: int,
-    now: datetime,
+    start: datetime,
+    end: datetime,
     client,  # boto3 CloudWatch Logs client
 ) -> bool:
-    """Return True if any log events match log_query in the lookback window."""
-    start_ms = int((now.timestamp() - lookback_hours * 3600) * 1000)
-    end_ms = int(now.timestamp() * 1000)
+    """Return True if any log events match log_query between start and end."""
+    start_ms = int(start.timestamp() * 1000)
+    end_ms = int(end.timestamp() * 1000)
 
     paginator = client.get_paginator("filter_log_events")
     pages = paginator.paginate(
@@ -80,8 +80,9 @@ def evaluate_alert(
 ) -> Result:
     """Evaluate a single Alert at a given time `now`, returning a Result object
     containing the alert status and message."""
+    start, end = alert.query_window(now)
     found_match = query_cloudwatch(
-        alert.log_group, alert.log_query, alert.lookback_hours, now, client
+        alert.log_group, alert.log_query, start, end, client
     )
 
     status = ResultStatus.PASS
