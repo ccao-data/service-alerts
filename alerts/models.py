@@ -170,9 +170,8 @@ class Alert:
             and self.max_duration_minutes is not None
         ):
             # Search from the most recent job start up to the job's deadline.
-            # Anchor to the alert's scheduled check time rather than `now` so
-            # that delayed workflow runs search the same window as on-time
-            # runs.
+            # Anchor to the alert's scheduled check time so that delayed workflow
+            # runs search the same window as on-time runs.
             check_time = croniter(
                 self.schedule, now + timedelta(seconds=1)
             ).get_prev(datetime)
