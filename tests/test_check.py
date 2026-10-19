@@ -107,12 +107,19 @@ class TestEvaluateAlert:
         assert result.alert == alert
         assert result.status == expected_status
 
-    def test_evaluate_alert_queries_alert_window(self):
-        alert = make_alert(
-            lookback_hours=None,
-            job_schedule="0 9 * * *",
-            max_duration_minutes=90,
-        )
+    @pytest.mark.parametrize(
+        "window_fields",
+        [
+            {"lookback_hours": 12},
+            {
+                "lookback_hours": None,
+                "job_schedule": "0 9 * * *",
+                "max_duration_minutes": 90,
+            },
+        ],
+    )
+    def test_evaluate_alert_queries_alert_window(self, window_fields: dict):
+        alert = make_alert(**window_fields)
         client = make_paginator({"events": []})
         evaluate_alert(alert, _NOW, client)
         _, kwargs = client.get_paginator.return_value.paginate.call_args

@@ -113,6 +113,28 @@ class TestAlert:
                 max_duration_minutes=90,
             )
 
+    @pytest.mark.parametrize("fail_if", ["match", "no_match"])
+    def test_init_valid_fail_if_values(self, fail_if: str):
+        alert = make_alert(fail_if=fail_if)
+        assert alert.fail_if == fail_if
+
+    def test_init_invalid_fail_if_raises(self):
+        with pytest.raises(ValueError, match="invalid fail_if value"):
+            make_alert(fail_if="bad_value")
+
+    @pytest.mark.parametrize("param", ["aws_sns_topic", "failure_message"])
+    def test_init_empty_optional_param_raises(self, param: str):
+        with pytest.raises(
+            ValueError, match=f"{param} must be a non-empty string"
+        ):
+            make_alert(**{param: ""})
+
+    def test_init_invalid_schedule_raises(self):
+        with pytest.raises(
+            ValueError, match="must be a 5-field cron expression"
+        ):
+            make_alert(schedule="0 * * *")
+
     def test_query_window_lookback(self):
         now = datetime(2026, 9, 24, 12, 5, tzinfo=timezone.utc)
         alert = make_alert(lookback_hours=12)
@@ -138,28 +160,6 @@ class TestAlert:
             datetime(2026, 9, 24, 9, 0, tzinfo=timezone.utc),
             datetime(2026, 9, 24, 10, 30, tzinfo=timezone.utc),
         )
-
-    @pytest.mark.parametrize("fail_if", ["match", "no_match"])
-    def test_init_valid_fail_if_values(self, fail_if: str):
-        alert = make_alert(fail_if=fail_if)
-        assert alert.fail_if == fail_if
-
-    def test_init_invalid_fail_if_raises(self):
-        with pytest.raises(ValueError, match="invalid fail_if value"):
-            make_alert(fail_if="bad_value")
-
-    @pytest.mark.parametrize("param", ["aws_sns_topic", "failure_message"])
-    def test_init_empty_optional_param_raises(self, param: str):
-        with pytest.raises(
-            ValueError, match=f"{param} must be a non-empty string"
-        ):
-            make_alert(**{param: ""})
-
-    def test_init_invalid_schedule_raises(self):
-        with pytest.raises(
-            ValueError, match="must be a 5-field cron expression"
-        ):
-            make_alert(schedule="0 * * *")
 
     def test_as_dict_returns_correctly_populated_dictionary(
         self, alert: Alert
