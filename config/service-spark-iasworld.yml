@@ -50,3 +50,29 @@ alerts:
     lookback_hours: *lookback-hours
     aws_sns_topic: *aws-sns-topic
     failure_message: *failure-message-error
+
+  - id: service-spark-iasworld-late-nightly
+    name: "Nightly iasWorld ingest did not complete on time"
+    log_group: *log-group
+    log_query: &log-query-late '"Total extraction duration"'
+    fail_if: *fail-if-not-run
+    schedule: *schedule-nightly
+    job_schedule: "0 9 * * 0-5"
+    max_duration_minutes: 90
+    aws_sns_topic: *aws-sns-topic
+    failure_message: &failure-message-late >-
+      The job that imports data from iasWorld did not complete in the expected amount of time.
+      Downstream jobs that ran after the expected completion time may have
+      used stale data. See the CloudWatch logs for details:
+      https://us-east-1.console.aws.amazon.com/cloudwatch/home?region=us-east-1#logsV2:log-groups/log-group/$252Fccao$252Fjobs$252Fspark
+
+  - id: service-spark-iasworld-late-weekend
+    name: "Weekend iasWorld ingest did not complete on time"
+    log_group: *log-group
+    log_query: *log-query-late
+    fail_if: *fail-if-not-run
+    schedule: *schedule-weekend
+    job_schedule: "0 9 * * 6"
+    max_duration_minutes: 300
+    aws_sns_topic: *aws-sns-topic
+    failure_message: *failure-message-late
