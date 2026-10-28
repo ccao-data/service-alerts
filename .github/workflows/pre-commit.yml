@@ -19,4 +19,4 @@ jobs:
           python-version: "3.14"
 
       - name: Run pre-commit checks
-        uses: ccao-data/actions/pre-commit@main
+        uses: ccao-data/actions/pre-commit@jeancochrane/use-upstream-R-package-sources
