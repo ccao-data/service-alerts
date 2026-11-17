@@ -4,7 +4,7 @@ alerts:
     log_group: /ccao/services/api-res-avm
     log_query: '"status=500"'
     fail_if: "match"
-    schedule: "0 18 * * *"
+    schedule: "0 12 * * *"
     lookback_hours: 24
     aws_sns_topic: ccao-cloudwatch-alarm
     failure_message: >-
