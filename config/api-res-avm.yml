@@ -1,0 +1,13 @@
+alerts:
+  - id: api-res-avm-error
+    name: "Model API returned a 500 error"
+    log_group: /ccao/services/api-res-avm
+    log_query: '"status=500"'
+    fail_if: "match"
+    schedule: "0 12 * * *"
+    lookback_hours: 24
+    aws_sns_topic: ccao-cloudwatch-alarm
+    failure_message: >-
+      The model API returned at least one 500 (internal server error) response
+      to a client in the past 24 hours. See the CloudWatch logs for details:
+      https://us-east-1.console.aws.amazon.com/cloudwatch/home?region=us-east-1#logsV2:log-groups/log-group/$252Fccao$252Fservices$252Fapi-res-avm
